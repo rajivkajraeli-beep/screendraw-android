@@ -30,7 +30,7 @@ class DrawingView(context: Context) : View(context) {
     private var previewBitmap: Bitmap? = null
 
     private val undoStack = ArrayList<Bitmap>()
-    var boardMode = "off" // off / white / black
+    var currentBoardMode = "off" // off / white / black
 
     private val greenCandle = Color.parseColor("#26A65B")
     private val redCandle = Color.parseColor("#D93A2F")
@@ -63,9 +63,9 @@ class DrawingView(context: Context) : View(context) {
     }
 
     fun setBoardMode(mode: String) {
-        boardMode = if (boardMode == mode) "off" else mode
+        currentBoardMode = if (currentBoardMode == mode) "off" else mode
         setBackgroundColor(
-            when (boardMode) {
+            when (currentBoardMode) {
                 "white" -> Color.WHITE
                 "black" -> Color.parseColor("#121212")
                 else -> Color.TRANSPARENT
