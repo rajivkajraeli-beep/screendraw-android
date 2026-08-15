@@ -174,3 +174,211 @@ class OverlayService : Service() {
         addIconTool(IconFactory.squareIcon(dp(28)), "square")
         addIconTool(IconFactory.lineIcon(dp(28)), "line")
         addIconTool(IconFactory.arrowIcon(dp(28)), "arrow")
+
+        addDivider()
+
+        val candleToggle = Button(this).apply {
+            text = "▸"
+            textSize = 12f
+            setTextColor(Color.parseColor("#C3CEDD"))
+            background = null
+        }
+        panel.addView(candleToggle, fullWidthParams(dp(24)))
+
+        val candleContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+        val stages = floatArrayOf(0.78f, 0.52f, 0.28f, 0.08f)
+        for (i in 0..3) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            row.addView(smallIconButton(IconFactory.candle(dp(26), true, stages[i])) { drawingView.currentTool = "gc${i + 1}" })
+            row.addView(smallIconButton(IconFactory.candle(dp(26), false, stages[i])) { drawingView.currentTool = "rc${i + 1}" })
+            candleContainer.addView(row)
+        }
+        val nwRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        nwRow.addView(smallIconButton(IconFactory.candle(dp(26), true, 0.62f, wick = false)) { drawingView.currentTool = "gcnw" })
+        nwRow.addView(smallIconButton(IconFactory.candle(dp(26), false, 0.62f, wick = false)) { drawingView.currentTool = "rcnw" })
+        candleContainer.addView(nwRow)
+        val dojiRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        dojiRow.addView(smallIconButton(IconFactory.candle(dp(26), true, 0f, wick = true, lineBody = true)) { drawingView.currentTool = "gcdoji" })
+        dojiRow.addView(smallIconButton(IconFactory.candle(dp(26), false, 0f, wick = true, lineBody = true)) { drawingView.currentTool = "rcdoji" })
+        candleContainer.addView(dojiRow)
+
+        candleToggle.setOnClickListener {
+            candlesOpen = !candlesOpen
+            candleContainer.visibility = if (candlesOpen) View.VISIBLE else View.GONE
+            candleToggle.text = if (candlesOpen) "▾" else "▸"
+        }
+        panel.addView(candleContainer)
+
+        addDivider()
+
+        val seek = SeekBar(this).apply {
+            max = 60; progress = 6
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar?, value: Int, fromUser: Boolean) {
+                    drawingView.strokeWidth = value.toFloat().coerceAtLeast(2f)
+                }
+                override fun onStartTrackingTouch(sb: SeekBar?) {}
+                override fun onStopTrackingTouch(sb: SeekBar?) {}
+            })
+        }
+        panel.addView(seek, fullWidthParams(dp(30)))
+
+        addDivider()
+
+        val actionRow1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        actionRow1.addView(smallIconButton(IconFactory.undoIcon(dp(24))) { drawingView.undo() })
+        actionRow1.addView(smallIconButton(IconFactory.clearIcon(dp(24))) { drawingView.clear() })
+        panel.addView(actionRow1)
+
+        val actionRow2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        actionRow2.addView(smallIconButton(IconFactory.whiteboardIcon(dp(24))) { drawingView.setBoardMode("white") })
+        actionRow2.addView(smallIconButton(IconFactory.blackboardIcon(dp(24))) { drawingView.setBoardMode("black") })
+        panel.addView(actionRow2)
+
+        panel.addView(smallIconButton(IconFactory.saveIcon(dp(24))) { drawingView.saveToGallery(this) }, fullWidthParams(dp(36)))
+
+        addDivider()
+
+        val colorGrid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val colors = listOf(
+            Color.parseColor("#FF3B30"), Color.parseColor("#FFD60A"),
+            Color.parseColor("#34C759"), Color.parseColor("#0A84FF"),
+            Color.BLACK, Color.WHITE
+        )
+        var row: LinearLayout? = null
+        colors.forEachIndexed { i, cColor ->
+            if (i % 2 == 0) {
+                row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                colorGrid.addView(row)
+            }
+            val swatch = View(this).apply {
+                background = GradientDrawable().apply { setColor(cColor); shape = GradientDrawable.OVAL }
+                layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) }
+                setOnClickListener { drawingView.currentColor = cColor }
+            }
+            row?.addView(swatch)
+        }
+        panel.addView(colorGrid)
+
+        addDivider()
+
+        panel.addView(smallIconButton(IconFactory.quitIcon(dp(24))) { stopSelf() }, fullWidthParams(dp(36)))
+
+        toolbarWindow.addView(dot)
+        toolbarWindow.addView(scrollPanel)
+        windowManager.addView(toolbarWindow, toolbarParams)
+    }
+
+    private fun fullWidthParams(height: Int) = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT, height
+    ).apply { setMargins(0, dp(2), 0, dp(2)) }
+
+    private fun addDivider() {
+        val line = View(this).apply {
+            setBackgroundColor(Color.parseColor("#33F6F3EA"))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)).apply {
+                setMargins(0, dp(4), 0, dp(4))
+            }
+        }
+        panel.addView(line)
+    }
+
+    private fun addDragHandle() {
+        val handle = TextView(this).apply {
+            text = "⠿ ⠿ ⠿"
+            setTextColor(Color.parseColor("#8FA3BD"))
+            gravity = Gravity.CENTER
+            textSize = 9f
+        }
+        var lastRawX = 0f; var lastRawY = 0f
+        var startX = 0; var startY = 0
+        handle.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    startX = toolbarParams.x; startY = toolbarParams.y
+                    lastRawX = event.rawX; lastRawY = event.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    toolbarParams.x = startX + (event.rawX - lastRawX).toInt()
+                    toolbarParams.y = startY + (event.rawY - lastRawY).toInt()
+                    windowManager.updateViewLayout(toolbarWindow, toolbarParams)
+                    true
+                }
+                else -> false
+            }
+        }
+        panel.addView(handle, fullWidthParams(dp(20)))
+
+        val minBtn = TextView(this).apply {
+            text = "—"
+            textSize = 10f
+            gravity = Gravity.CENTER
+            setTextColor(Color.parseColor("#8FA3BD"))
+            setOnClickListener { toggleMinimize() }
+        }
+        panel.addView(minBtn, fullWidthParams(dp(16)))
+    }
+
+    private fun toggleMinimize() {
+        minimized = !minimized
+        scrollPanel.visibility = if (minimized) View.GONE else View.VISIBLE
+        dot.visibility = if (minimized) View.VISIBLE else View.GONE
+    }
+
+    private val toolButtons = mutableListOf<ImageButton>()
+
+    private fun addIconTool(icon: Bitmap, tool: String) {
+        val btn = ImageButton(this).apply {
+            setImageBitmap(icon)
+            background = GradientDrawable().apply {
+                setColor(Color.TRANSPARENT)
+                cornerRadius = dp(6).toFloat()
+            }
+            scaleType = ImageView.ScaleType.CENTER
+            setOnClickListener {
+                drawingView.currentTool = tool
+                toolButtons.forEach { b -> b.background = GradientDrawable().apply { setColor(Color.TRANSPARENT); cornerRadius = dp(6).toFloat() } }
+                background = GradientDrawable().apply { setColor(Color.parseColor("#3F7D78")); cornerRadius = dp(6).toFloat() }
+            }
+        }
+        toolButtons.add(btn)
+        panel.addView(btn, fullWidthParams(dp(36)))
+    }
+
+    private fun smallIconButton(icon: Bitmap, onClick: () -> Unit): ImageButton {
+        return ImageButton(this).apply {
+            setImageBitmap(icon)
+            background = GradientDrawable().apply {
+                setColor(Color.TRANSPARENT)
+                cornerRadius = dp(6).toFloat()
+            }
+            scaleType = ImageView.ScaleType.CENTER
+            layoutParams = LinearLayout.LayoutParams(0, dp(32), 1f)
+            setOnClickListener { onClick() }
+        }
+    }
+
+    private fun startForegroundNotification() {
+        val channelId = "screendraw_channel"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(channelId, "ScreenDraw", NotificationManager.IMPORTANCE_LOW)
+            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
+        }
+        val notification = NotificationCompat.Builder(this, channelId)
+            .setContentTitle("ScreenDraw is running")
+            .setContentText("Tap the floating toolbar to draw on your screen.")
+            .setSmallIcon(android.R.drawable.ic_menu_edit)
+            .build()
+        startForeground(1, notification)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (::drawingView.isInitialized) windowManager.removeView(drawingView)
+        if (::toolbarWindow.isInitialized) windowManager.removeView(toolbarWindow)
+    }
+}
