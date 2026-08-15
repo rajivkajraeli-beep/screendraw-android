@@ -2,36 +2,37 @@ package com.reflow.screendraw
 
 import android.app.*
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.IBinder
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.*
 import androidx.core.app.NotificationCompat
 
-/**
- * Two overlay windows are added on top of everything else:
- *  1. drawingView  — full-screen, transparent, touch-through by default.
- *     Toggling "Draw mode" simply flips FLAG_NOT_TOUCHABLE, which Android
- *     handles natively and instantly — no ghosting, no black-screen tricks
- *     needed (unlike the Windows version, this is a well-supported OS
- *     capability, since it's exactly what floating chat-head apps use).
- *  2. toolbarPanel — small, always interactive, draggable via its handle.
- */
 class OverlayService : Service() {
 
     private lateinit var windowManager: WindowManager
     private lateinit var drawingView: DrawingView
-    private lateinit var toolbarPanel: LinearLayout
-    private lateinit var drawParams: WindowManager.LayoutParams
+    private lateinit var toolbarWindow: LinearLayout
+    private lateinit var scrollPanel: ScrollView
+    private lateinit var panel: LinearLayout
+    private lateinit var dot: TextView
     private lateinit var toolbarParams: WindowManager.LayoutParams
+    private lateinit var drawParams: WindowManager.LayoutParams
+    private lateinit var drawBtn: Button
 
     private var drawModeOn = false
-    private val toolButtons = mutableListOf<Button>()
+    private var minimized = false
+    private var candlesOpen = false
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -69,6 +70,17 @@ class OverlayService : Service() {
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
         }
         windowManager.updateViewLayout(drawingView, drawParams)
+        drawBtn.background = GradientDrawable().apply {
+            setColor(Color.parseColor(if (enabled) "#C9622F" else "#3F7D78"))
+            cornerRadius = dp(10).toFloat()
+        }
+    }
+
+    private fun roundedBg(radiusDp: Int, colorHex: String = "#EE16233A"): GradientDrawable {
+        return GradientDrawable().apply {
+            setColor(Color.parseColor(colorHex))
+            cornerRadius = dp(radiusDp).toFloat()
+        }
     }
 
     private fun buildToolbar(overlayType: Int) {
@@ -80,159 +92,85 @@ class OverlayService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = 24
-            y = 160
+            x = dp(12)
+            y = dp(80)
         }
 
-        toolbarPanel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(24, 24, 24, 24)
-            setBackgroundColor(Color.parseColor("#EE16233A"))
-        }
+        toolbarWindow = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        addDragHandle()
-
-        val drawBtn = Button(this).apply {
-            text = "Draw: OFF"
-            setOnClickListener {
-                setDrawMode(!drawModeOn)
-                text = if (drawModeOn) "Draw: ON" else "Draw: OFF"
-            }
-        }
-        toolbarPanel.addView(drawBtn)
-
-        addToolButton("Pen", DrawingView.Tool.PEN)
-        addToolButton("Highlighter", DrawingView.Tool.HIGHLIGHTER)
-        addToolButton("Eraser", DrawingView.Tool.ERASER)
-        addToolButton("Circle", DrawingView.Tool.CIRCLE)
-        addToolButton("Square", DrawingView.Tool.SQUARE)
-        addToolButton("Line", DrawingView.Tool.LINE)
-        addToolButton("Arrow", DrawingView.Tool.ARROW)
-
-        addColorRow()
-        addThicknessSlider()
-
-        val actionRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        actionRow.addView(Button(this).apply {
-            text = "Undo"
-            setOnClickListener { drawingView.undo() }
-        })
-        actionRow.addView(Button(this).apply {
-            text = "Clear"
-            setOnClickListener { drawingView.clear() }
-        })
-        toolbarPanel.addView(actionRow)
-
-        toolbarPanel.addView(Button(this).apply {
-            text = "Whiteboard"
-            setOnClickListener { drawingView.toggleWhiteboard() }
-        })
-        toolbarPanel.addView(Button(this).apply {
-            text = "Save"
-            setOnClickListener { drawingView.saveToGallery(this@OverlayService) }
-        })
-        toolbarPanel.addView(Button(this).apply {
-            text = "Quit"
-            setOnClickListener { stopSelf() }
-        })
-
-        windowManager.addView(toolbarPanel, toolbarParams)
-    }
-
-    private fun addDragHandle() {
-        val handle = TextView(this).apply {
-            text = "⠿ ⠿ ⠿  drag"
-            setTextColor(Color.parseColor("#8FA3BD"))
+        // --- minimized dot ---
+        dot = TextView(this).apply {
+            text = "⠿"
             gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 16)
+            setTextColor(Color.parseColor("#F6F3EA"))
+            textSize = 18f
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#EE16233A"))
+                shape = GradientDrawable.OVAL
+            }
+            layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
+            visibility = View.GONE
         }
-        var lastRawX = 0f
-        var lastRawY = 0f
-        var startX = 0
-        var startY = 0
-        handle.setOnTouchListener { _, event ->
+        var dragStartRawX = 0f; var dragStartRawY = 0f
+        var dragStartX = 0; var dragStartY = 0
+        var moved = false
+        dot.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    startX = toolbarParams.x
-                    startY = toolbarParams.y
-                    lastRawX = event.rawX
-                    lastRawY = event.rawY
+                    dragStartX = toolbarParams.x; dragStartY = toolbarParams.y
+                    dragStartRawX = event.rawX; dragStartRawY = event.rawY
+                    moved = false
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    toolbarParams.x = startX + (event.rawX - lastRawX).toInt()
-                    toolbarParams.y = startY + (event.rawY - lastRawY).toInt()
-                    windowManager.updateViewLayout(toolbarPanel, toolbarParams)
+                    val dx = (event.rawX - dragStartRawX).toInt()
+                    val dy = (event.rawY - dragStartRawY).toInt()
+                    if (Math.abs(dx) > 6 || Math.abs(dy) > 6) moved = true
+                    toolbarParams.x = dragStartX + dx
+                    toolbarParams.y = dragStartY + dy
+                    windowManager.updateViewLayout(toolbarWindow, toolbarParams)
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (!moved) toggleMinimize()
                     true
                 }
                 else -> false
             }
         }
-        toolbarPanel.addView(handle)
-    }
 
-    private fun addToolButton(label: String, tool: DrawingView.Tool) {
-        val b = Button(this).apply {
-            text = label
-            setOnClickListener { drawingView.currentTool = tool }
+        // --- full panel, inside a ScrollView so it can never exceed the screen ---
+        panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(10), dp(8), dp(10))
         }
-        toolButtons.add(b)
-        toolbarPanel.addView(b)
-    }
 
-    private fun addColorRow() {
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val colors = listOf(
-            Color.parseColor("#FF3B30"), Color.parseColor("#FFD60A"),
-            Color.parseColor("#34C759"), Color.parseColor("#0A84FF"),
-            Color.BLACK, Color.WHITE
-        )
-        colors.forEach { c ->
-            val swatch = View(this).apply {
-                setBackgroundColor(c)
-                layoutParams = LinearLayout.LayoutParams(48, 48).apply { setMargins(4, 4, 4, 4) }
-                setOnClickListener { drawingView.currentColor = c }
+        scrollPanel = ScrollView(this).apply {
+            addView(panel)
+            background = roundedBg(16)
+        }
+        val maxHeight = (resources.displayMetrics.heightPixels * 0.82).toInt()
+        scrollPanel.layoutParams = LinearLayout.LayoutParams(dp(60), maxHeight)
+
+        addDragHandle()
+
+        drawBtn = Button(this).apply {
+            text = "●"
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#3F7D78"))
+                cornerRadius = dp(10).toFloat()
             }
-            row.addView(swatch)
+            setOnClickListener { setDrawMode(!drawModeOn) }
         }
-        toolbarPanel.addView(row)
-    }
+        panel.addView(drawBtn, fullWidthParams(dp(36)))
 
-    private fun addThicknessSlider() {
-        val seek = SeekBar(this).apply {
-            max = 40
-            progress = 6
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(sb: SeekBar?, value: Int, fromUser: Boolean) {
-                    drawingView.strokeWidth = value.toFloat().coerceAtLeast(2f)
-                }
-                override fun onStartTrackingTouch(sb: SeekBar?) {}
-                override fun onStopTrackingTouch(sb: SeekBar?) {}
-            })
-        }
-        toolbarPanel.addView(seek)
-    }
+        addDivider()
 
-    private fun startForegroundNotification() {
-        val channelId = "screendraw_channel"
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                channelId, "ScreenDraw", NotificationManager.IMPORTANCE_LOW
-            )
-            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
-                .createNotificationChannel(channel)
-        }
-        val notification = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("ScreenDraw is running")
-            .setContentText("Tap the floating toolbar to draw on your screen.")
-            .setSmallIcon(android.R.drawable.ic_menu_edit)
-            .build()
-        startForeground(1, notification)
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        if (::drawingView.isInitialized) windowManager.removeView(drawingView)
-        if (::toolbarPanel.isInitialized) windowManager.removeView(toolbarPanel)
-    }
-}
+        addIconTool(IconFactory.pen(dp(28)), "pen")
+        addIconTool(IconFactory.highlighter(dp(28)), "highlighter")
+        addIconTool(IconFactory.eraser(dp(28)), "eraser")
+        addIconTool(IconFactory.circleIcon(dp(28)), "circle")
+        addIconTool(IconFactory.squareIcon(dp(28)), "square")
+        addIconTool(IconFactory.lineIcon(dp(28)), "line")
+        addIconTool(IconFactory.arrowIcon(dp(28)
