@@ -173,4 +173,4 @@ class OverlayService : Service() {
         addIconTool(IconFactory.circleIcon(dp(28)), "circle")
         addIconTool(IconFactory.squareIcon(dp(28)), "square")
         addIconTool(IconFactory.lineIcon(dp(28)), "line")
-        addIconTool(IconFactory.arrowIcon(dp(28)
+        addIconTool(IconFactory.arrowIcon(dp(28)), "arrow")
