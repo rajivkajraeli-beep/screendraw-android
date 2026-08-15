@@ -1,0 +1,2 @@
+rootProject.name = "ScreenDraw"
+include ':app'
