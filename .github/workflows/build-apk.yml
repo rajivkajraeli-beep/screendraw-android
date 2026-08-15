@@ -31,6 +31,7 @@ jobs:
           [ -f MainActivity.kt ] && mv MainActivity.kt app/src/main/java/com/reflow/screendraw/MainActivity.kt
           [ -f DrawingView.kt ] && mv DrawingView.kt app/src/main/java/com/reflow/screendraw/DrawingView.kt
           [ -f OverlayService.kt ] && mv OverlayService.kt app/src/main/java/com/reflow/screendraw/OverlayService.kt
+          [ -f IconFactory.kt ] && mv IconFactory.kt app/src/main/java/com/reflow/screendraw/IconFactory.kt
           [ -f strings.xml ] && mv strings.xml app/src/main/res/values/strings.xml
 
           echo "--- Final structure ---"
