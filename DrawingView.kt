@@ -3,6 +3,7 @@ package com.reflow.screendraw
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.*
+import android.os.Build
 import android.provider.MediaStore
 import android.view.MotionEvent
 import android.view.View
@@ -34,6 +35,14 @@ class DrawingView(context: Context) : View(context) {
 
     private val greenCandle = Color.parseColor("#26A65B")
     private val redCandle = Color.parseColor("#D93A2F")
+
+    private var showIndicator = false
+    private var indicatorX = 0f
+    private var indicatorY = 0f
+    private val indicatorOffset = 90f
+    private var activePointerId = -1
+    private var currentPressure = 1f
+    private var currentToolType = MotionEvent.TOOL_TYPE_FINGER
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
@@ -76,44 +85,159 @@ class DrawingView(context: Context) : View(context) {
     override fun onDraw(canvasView: Canvas) {
         super.onDraw(canvasView)
         (previewBitmap ?: bitmap)?.let { canvasView.drawBitmap(it, 0f, 0f, null) }
+        if (showIndicator) drawIndicator(canvasView)
     }
 
+    private fun drawIndicator(canvasView: Canvas) {
+        val ix = indicatorX
+        val iy = indicatorY - indicatorOffset
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 2f
+        p.color = Color.argb(120, 255, 255, 255)
+        canvasView.drawLine(ix, iy, indicatorX, indicatorY, p)
+
+        if (currentTool == "eraser") {
+            val radius = (strokeWidth * 5 / 2).coerceIn(14f, 40f)
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 3f
+            p.color = Color.WHITE
+            canvasView.drawCircle(ix, iy, radius, p)
+            p.color = Color.argb(160, 0, 0, 0)
+            p.strokeWidth = 1.5f
+            canvasView.drawCircle(ix, iy, radius, p)
+        } else {
+            val radius = strokeWidth.coerceIn(8f, 26f)
+            p.style = Paint.Style.FILL
+            p.color = currentColor
+            p.alpha = if (currentTool == "highlighter") 150 else 255
+            canvasView.drawCircle(ix, iy, radius, p)
+            p.style = Paint.Style.STROKE
+            p.strokeWidth = 2f
+            p.color = Color.WHITE
+            canvasView.drawCircle(ix, iy, radius, p)
+            p.color = Color.argb(160, 0, 0, 0)
+            p.strokeWidth = 1f
+            canvasView.drawCircle(ix, iy, radius + 1f, p)
+        }
+    }
+
+    /** Palm rejection: only one pointer drives drawing at a time. Once a
+     * stroke starts, any other simultaneous touch (a resting palm, a second
+     * finger) is ignored entirely — it can't interrupt or redirect the
+     * stroke. A stylus (if you're using one) always takes priority and will
+     * take over even if a finger/palm touched first. Stylus strokes are also
+     * pressure-sensitive: press harder for a thicker line. */
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        val x = event.x; val y = event.y
-        when (event.action) {
+        when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                pushUndo()
-                startX = x; startY = y; lastX = x; lastY = y
-                isShapeTool = currentTool !in listOf("pen", "highlighter", "eraser")
-                if (isShapeTool) previewBitmap = bitmap?.copy(Bitmap.Config.ARGB_8888, true)
-                else strokeSegment(x, y, x, y)
+                activePointerId = event.getPointerId(0)
+                currentToolType = event.getToolType(0)
+                beginStroke(event.getX(0), event.getY(0), event.getPressure(0))
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                val newIndex = event.actionIndex
+                val isStylus = event.getToolType(newIndex) == MotionEvent.TOOL_TYPE_STYLUS
+                val curIdx = event.findPointerIndex(activePointerId)
+                val currentIsStylus = curIdx >= 0 && event.getToolType(curIdx) == MotionEvent.TOOL_TYPE_STYLUS
+                if (isStylus && !currentIsStylus) {
+                    previewBitmap = null
+                    activePointerId = event.getPointerId(newIndex)
+                    currentToolType = MotionEvent.TOOL_TYPE_STYLUS
+                    beginStroke(event.getX(newIndex), event.getY(newIndex), event.getPressure(newIndex))
+                }
             }
             MotionEvent.ACTION_MOVE -> {
-                if (isShapeTool) {
-                    val preview = previewBitmap?.copy(Bitmap.Config.ARGB_8888, true)
-                    val pc = preview?.let { Canvas(it) }
-                    drawShapeInto(pc, startX, startY, x, y)
-                    previewBitmap = preview
-                    invalidate()
-                } else {
-                    strokeSegment(lastX, lastY, x, y)
-                    lastX = x; lastY = y
-                }
+                val idx = event.findPointerIndex(activePointerId)
+                if (idx < 0) return true
+                moveStroke(event.getX(idx), event.getY(idx), event.getPressure(idx))
             }
             MotionEvent.ACTION_UP -> {
-                if (isShapeTool) {
-                    drawShapeInto(canvas, startX, startY, x, y)
-                    previewBitmap = null
-                    invalidate()
+                val idx = event.findPointerIndex(activePointerId)
+                val x = if (idx >= 0) event.getX(idx) else lastX
+                val y = if (idx >= 0) event.getY(idx) else lastY
+                endStroke(x, y)
+            }
+            MotionEvent.ACTION_POINTER_UP -> {
+                val liftedIndex = event.actionIndex
+                if (event.getPointerId(liftedIndex) == activePointerId) {
+                    endStroke(event.getX(liftedIndex), event.getY(liftedIndex))
                 }
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                showIndicator = false
+                previewBitmap = null
+                activePointerId = -1
+                invalidate()
             }
         }
         return true
     }
 
+    /** S-Pen hovers above the screen before touching — show the preview
+     * bubble during hover too, so you can see exactly where the tip is
+     * aimed before you commit to the stroke. */
+    override fun onHoverEvent(event: MotionEvent): Boolean {
+        if (event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE -> {
+                    indicatorX = event.getX(0); indicatorY = event.getY(0)
+                    showIndicator = true
+                    invalidate()
+                }
+                MotionEvent.ACTION_HOVER_EXIT -> {
+                    showIndicator = false
+                    invalidate()
+                }
+            }
+        }
+        return super.onHoverEvent(event)
+    }
+
+    private fun beginStroke(x: Float, y: Float, pressure: Float) {
+        indicatorX = x; indicatorY = y
+        currentPressure = pressure
+        pushUndo()
+        startX = x; startY = y; lastX = x; lastY = y
+        isShapeTool = currentTool !in listOf("pen", "highlighter", "eraser")
+        showIndicator = true
+        if (isShapeTool) previewBitmap = bitmap?.copy(Bitmap.Config.ARGB_8888, true)
+        else strokeSegment(x, y, x, y)
+    }
+
+    private fun moveStroke(x: Float, y: Float, pressure: Float) {
+        indicatorX = x; indicatorY = y
+        currentPressure = pressure
+        showIndicator = true
+        if (isShapeTool) {
+            val preview = previewBitmap?.copy(Bitmap.Config.ARGB_8888, true)
+            val pc = preview?.let { Canvas(it) }
+            drawShapeInto(pc, startX, startY, x, y)
+            previewBitmap = preview
+            invalidate()
+        } else {
+            strokeSegment(lastX, lastY, x, y)
+            lastX = x; lastY = y
+        }
+    }
+
+    private fun endStroke(x: Float, y: Float) {
+        showIndicator = false
+        if (isShapeTool) {
+            drawShapeInto(canvas, startX, startY, x, y)
+            previewBitmap = null
+        }
+        activePointerId = -1
+        invalidate()
+    }
+
     private fun applyPaintForTool() {
         paint.style = Paint.Style.STROKE
         paint.xfermode = null
+        val pressureFactor = if (currentToolType == MotionEvent.TOOL_TYPE_STYLUS)
+            (0.4f + currentPressure * 1.3f).coerceIn(0.35f, 2f)
+        else 1f
         when (currentTool) {
             "eraser" -> {
                 paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
@@ -123,12 +247,12 @@ class DrawingView(context: Context) : View(context) {
             "highlighter" -> {
                 paint.color = currentColor
                 paint.alpha = 90
-                paint.strokeWidth = strokeWidth * 4
+                paint.strokeWidth = strokeWidth * 4 * pressureFactor
             }
             else -> {
                 paint.color = currentColor
                 paint.alpha = 255
-                paint.strokeWidth = strokeWidth
+                paint.strokeWidth = strokeWidth * pressureFactor
             }
         }
     }
@@ -228,18 +352,25 @@ class DrawingView(context: Context) : View(context) {
         return Color.rgb(r, g, b)
     }
 
-    fun saveToGallery(context: Context) {
-        val bmp = bitmap ?: return
-        val filename = "screendraw_" +
-            SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) + ".png"
-        val resolver = context.contentResolver
-        val values = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, filename)
-            put(MediaStore.Images.Media.MIME_TYPE, "image/png")
-            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/ScreenDraw")
+    fun saveToGallery(context: Context): Boolean {
+        val bmp = bitmap ?: return false
+        return try {
+            val filename = "screendraw_" +
+                SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) + ".png"
+            val resolver = context.contentResolver
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, filename)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/ScreenDraw")
+                }
+            }
+            val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return false
+            val out: OutputStream? = resolver.openOutputStream(uri)
+            out?.use { stream -> bmp.compress(Bitmap.CompressFormat.PNG, 100, stream) }
+            true
+        } catch (e: Exception) {
+            false
         }
-        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return
-        val out: OutputStream? = resolver.openOutputStream(uri)
-        out?.use { stream -> bmp.compress(Bitmap.CompressFormat.PNG, 100, stream) }
     }
 }

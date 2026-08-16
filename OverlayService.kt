@@ -7,7 +7,9 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -111,35 +113,72 @@ class OverlayService : Service() {
             layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
             visibility = View.GONE
         }
+        val quickBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = roundedBg(12)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            visibility = View.GONE
+        }
+        quickBarRef = quickBar
+        fun quickBtn(icon: Bitmap, action: () -> Unit): ImageButton = ImageButton(this).apply {
+            setImageBitmap(icon)
+            background = GradientDrawable().apply { setColor(Color.TRANSPARENT); cornerRadius = dp(6).toFloat() }
+            scaleType = ImageView.ScaleType.CENTER
+            layoutParams = LinearLayout.LayoutParams(dp(34), dp(34)).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) }
+            setOnClickListener {
+                action()
+                quickBar.visibility = View.GONE
+                windowManager.updateViewLayout(toolbarWindow, toolbarParams)
+            }
+        }
+        quickBar.addView(quickBtn(IconFactory.pen(dp(26))) { drawingView.currentTool = "pen"; setDrawMode(true) })
+        quickBar.addView(quickBtn(IconFactory.highlighter(dp(26))) { drawingView.currentTool = "highlighter"; setDrawMode(true) })
+        quickBar.addView(quickBtn(IconFactory.eraser(dp(26))) { drawingView.currentTool = "eraser"; setDrawMode(true) })
+        quickBar.addView(quickBtn(IconFactory.undoIcon(dp(26))) { drawingView.undo() })
+
         var dragStartRawX = 0f; var dragStartRawY = 0f
         var dragStartX = 0; var dragStartY = 0
         var moved = false
+        var longPressTriggered = false
+        val longPressHandler = Handler(Looper.getMainLooper())
+        val longPressRunnable = Runnable {
+            longPressTriggered = true
+            quickBar.visibility = if (quickBar.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            windowManager.updateViewLayout(toolbarWindow, toolbarParams)
+        }
         dot.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     dragStartX = toolbarParams.x; dragStartY = toolbarParams.y
                     dragStartRawX = event.rawX; dragStartRawY = event.rawY
                     moved = false
+                    longPressTriggered = false
+                    longPressHandler.postDelayed(longPressRunnable, 350)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = (event.rawX - dragStartRawX).toInt()
                     val dy = (event.rawY - dragStartRawY).toInt()
-                    if (Math.abs(dx) > 6 || Math.abs(dy) > 6) moved = true
-                    toolbarParams.x = dragStartX + dx
-                    toolbarParams.y = dragStartY + dy
-                    windowManager.updateViewLayout(toolbarWindow, toolbarParams)
+                    if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
+                        moved = true
+                        longPressHandler.removeCallbacks(longPressRunnable)
+                    }
+                    if (!longPressTriggered) {
+                        toolbarParams.x = dragStartX + dx
+                        toolbarParams.y = dragStartY + dy
+                        windowManager.updateViewLayout(toolbarWindow, toolbarParams)
+                    }
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (!moved) toggleMinimize()
+                    longPressHandler.removeCallbacks(longPressRunnable)
+                    if (!longPressTriggered && !moved) toggleMinimize()
                     true
                 }
                 else -> false
             }
         }
 
-        // --- full panel, inside a ScrollView so it can never exceed the screen ---
         panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(8), dp(10), dp(8), dp(10))
@@ -238,7 +277,10 @@ class OverlayService : Service() {
         actionRow2.addView(smallIconButton(IconFactory.blackboardIcon(dp(24))) { drawingView.setBoardMode("black") })
         panel.addView(actionRow2)
 
-        panel.addView(smallIconButton(IconFactory.saveIcon(dp(24))) { drawingView.saveToGallery(this) }, fullWidthParams(dp(36)))
+        panel.addView(smallIconButton(IconFactory.saveIcon(dp(24))) {
+            val ok = drawingView.saveToGallery(this)
+            Toast.makeText(this, if (ok) "Saved to Pictures/ScreenDraw" else "Save failed", Toast.LENGTH_SHORT).show()
+        }, fullWidthParams(dp(36)))
 
         addDivider()
 
@@ -268,6 +310,7 @@ class OverlayService : Service() {
         panel.addView(smallIconButton(IconFactory.quitIcon(dp(24))) { stopSelf() }, fullWidthParams(dp(36)))
 
         toolbarWindow.addView(dot)
+        toolbarWindow.addView(quickBar)
         toolbarWindow.addView(scrollPanel)
         windowManager.addView(toolbarWindow, toolbarParams)
     }
@@ -323,10 +366,13 @@ class OverlayService : Service() {
         panel.addView(minBtn, fullWidthParams(dp(16)))
     }
 
+    private lateinit var quickBarRef: LinearLayout
+
     private fun toggleMinimize() {
         minimized = !minimized
         scrollPanel.visibility = if (minimized) View.GONE else View.VISIBLE
         dot.visibility = if (minimized) View.VISIBLE else View.GONE
+        if (::quickBarRef.isInitialized) quickBarRef.visibility = View.GONE
     }
 
     private val toolButtons = mutableListOf<ImageButton>()
