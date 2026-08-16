@@ -34,6 +34,8 @@ class OverlayService : Service() {
     private lateinit var radialMenuWindow: FrameLayout
     private lateinit var radialMenuParams: WindowManager.LayoutParams
     private var radialMenuVisible = false
+    private lateinit var toolOptionsWindow: FrameLayout
+    private lateinit var toolOptionsParams: WindowManager.LayoutParams
 
     private var drawModeOn = false
     private var minimized = false
@@ -42,6 +44,8 @@ class OverlayService : Service() {
     private var pickerHue = 0f
     private var pickerSat = 0f
     private var pickerVal = 1f
+    private val thicknessLevels = floatArrayOf(3f, 6f, 10f, 16f, 24f)
+    private val toolThickness = mutableMapOf("pen" to 6f, "highlighter" to 6f, "eraser" to 6f)
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
@@ -71,6 +75,7 @@ class OverlayService : Service() {
 
         buildToolbar(overlayType)
         buildColorPicker(overlayType)
+        buildToolOptionsPopup(overlayType)
     }
 
     private fun setDrawMode(enabled: Boolean) {
@@ -274,36 +279,8 @@ class OverlayService : Service() {
 
         addDivider()
 
-        // numbered thickness picker: 5 fixed levels, tap a number to set stroke width exactly
-        // (replaces the old slider, which was fiddly to land on a precise size)
-        val thicknessLevels = floatArrayOf(3f, 6f, 10f, 16f, 24f)
-        val thicknessButtons = mutableListOf<TextView>()
-        fun selectThickness(index: Int) {
-            drawingView.strokeWidth = thicknessLevels[index]
-            thicknessButtons.forEachIndexed { i, b ->
-                b.background = GradientDrawable().apply {
-                    setColor(Color.parseColor(if (i == index) "#3F7D78" else "#33FFFFFF"))
-                    shape = GradientDrawable.OVAL
-                }
-            }
-        }
-        val thicknessRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        for (i in thicknessLevels.indices) {
-            val numBtn = TextView(this).apply {
-                text = (i + 1).toString()
-                gravity = Gravity.CENTER
-                setTextColor(Color.WHITE)
-                textSize = 12f
-                layoutParams = LinearLayout.LayoutParams(dp(26), dp(26)).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) }
-                setOnClickListener { selectThickness(i) }
-            }
-            thicknessButtons.add(numBtn)
-            thicknessRow.addView(numBtn)
-        }
-        panel.addView(thicknessRow, fullWidthParams(dp(32)))
-        selectThickness(1) // default: level 2 (stroke width 6), matches the old default
-
-        addDivider()
+        // thickness is now set per-tool via long-press on Pen/Highlighter/Eraser (see addIconTool) —
+        // no always-visible row here anymore, since it didn't fit in the slim vertical column.
 
         val actionRow1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         actionRow1.addView(smallIconButton(IconFactory.undoIcon(dp(24))) { drawingView.undo() })
@@ -315,11 +292,22 @@ class OverlayService : Service() {
         actionRow2.addView(smallIconButton(IconFactory.blackboardIcon(dp(24))) { drawingView.setBoardMode("black") })
         panel.addView(actionRow2)
 
-        panel.addView(smallIconButton(IconFactory.saveIcon(dp(24))) {
+        val saveBtn = smallIconButton(IconFactory.saveIcon(dp(24))) {}
+        saveBtn.setOnClickListener {
             Toast.makeText(this, "Saving…", Toast.LENGTH_SHORT).show()
             val ok = try { drawingView.saveToGallery(this) } catch (e: Exception) { false }
             Toast.makeText(this, if (ok) "Saved to Pictures/ScreenDraw" else "Save failed", Toast.LENGTH_SHORT).show()
-        }, fullWidthParams(dp(36)))
+            // flash the icon itself green/red too, since a Toast alone is easy to miss or
+            // gets suppressed by some phones — this gives an unmistakable visual confirmation
+            saveBtn.background = GradientDrawable().apply {
+                setColor(Color.parseColor(if (ok) "#3F7D78" else "#C0392B"))
+                cornerRadius = dp(6).toFloat()
+            }
+            Handler(Looper.getMainLooper()).postDelayed({
+                saveBtn.background = GradientDrawable().apply { setColor(Color.TRANSPARENT); cornerRadius = dp(6).toFloat() }
+            }, 1200)
+        }
+        panel.addView(saveBtn, fullWidthParams(dp(36)))
 
         addDivider()
 
@@ -373,9 +361,9 @@ class OverlayService : Service() {
 
     // --- radial quick-access menu: 5 buttons arranged in a circle around the dot ---
     private fun buildRadialMenu(overlayType: Int) {
-        val containerSize = dp(190)
-        val btnSize = dp(42)
-        val radius = dp(60)
+        val containerSize = dp(210)
+        val btnSize = dp(36)
+        val radius = dp(66)
         val center = containerSize / 2
 
         radialMenuParams = WindowManager.LayoutParams(
@@ -388,11 +376,11 @@ class OverlayService : Service() {
 
         radialMenuWindow = FrameLayout(this).apply { visibility = View.GONE }
 
-        fun radialBtn(icon: Bitmap, angleDeg: Double, action: () -> Unit): ImageButton {
+        fun radialBtn(icon: Bitmap, angleDeg: Double, onTap: () -> Unit, onLongPress: (() -> Unit)? = null): ImageButton {
             val rad = Math.toRadians(angleDeg)
             val cx = center + (radius * Math.cos(rad)).toInt() - btnSize / 2
             val cy = center + (radius * Math.sin(rad)).toInt() - btnSize / 2
-            return ImageButton(this).apply {
+            val btn = ImageButton(this).apply {
                 setImageBitmap(icon)
                 background = GradientDrawable().apply {
                     setColor(Color.parseColor("#EE16233A"))
@@ -400,29 +388,94 @@ class OverlayService : Service() {
                 }
                 scaleType = ImageView.ScaleType.CENTER
                 layoutParams = FrameLayout.LayoutParams(btnSize, btnSize).apply { leftMargin = cx; topMargin = cy }
-                setOnClickListener {
-                    action()
+            }
+            if (onLongPress == null) {
+                btn.setOnClickListener {
+                    onTap()
                     hideRadialMenu()
                 }
+            } else {
+                // this item supports both: a quick tap does the normal action, but holding it
+                // down pops up extra options (used for Pen -> thickness + color disc)
+                val handler = Handler(Looper.getMainLooper())
+                var longPressed = false
+                var moved = false
+                var downX = 0f; var downY = 0f
+                val longPressRunnable = Runnable {
+                    longPressed = true
+                    onLongPress()
+                }
+                btn.setOnTouchListener { v, event ->
+                    when (event.action) {
+                        MotionEvent.ACTION_DOWN -> {
+                            longPressed = false; moved = false
+                            downX = event.x; downY = event.y
+                            handler.postDelayed(longPressRunnable, 350)
+                            true
+                        }
+                        MotionEvent.ACTION_MOVE -> {
+                            if (Math.abs(event.x - downX) > dp(10) || Math.abs(event.y - downY) > dp(10)) {
+                                moved = true
+                                handler.removeCallbacks(longPressRunnable)
+                            }
+                            true
+                        }
+                        MotionEvent.ACTION_UP -> {
+                            handler.removeCallbacks(longPressRunnable)
+                            if (!longPressed && !moved) {
+                                v.performClick()
+                                onTap()
+                                hideRadialMenu()
+                            }
+                            true
+                        }
+                        MotionEvent.ACTION_CANCEL -> {
+                            handler.removeCallbacks(longPressRunnable)
+                            true
+                        }
+                        else -> false
+                    }
+                }
             }
+            return btn
         }
 
-        // 5 items spaced 72° apart around the circle, starting at the top
-        radialMenuWindow.addView(radialBtn(IconFactory.pen(dp(24)), -90.0) {
-            drawingView.currentTool = "pen"; setDrawMode(true)
-        })
-        radialMenuWindow.addView(radialBtn(IconFactory.eraser(dp(24)), -18.0) {
-            drawingView.currentTool = "eraser"; setDrawMode(true)
-        })
-        radialMenuWindow.addView(radialBtn(IconFactory.clearIcon(dp(24)), 54.0) {
+        // 8 items spaced 45° apart around the circle, starting at the top.
+        // Pen: tap selects it, long-press opens the Thickness + Color disc.
+        // Highlighter & Eraser: tap selects, long-press opens Thickness only (no color needed for eraser).
+        radialMenuWindow.addView(radialBtn(IconFactory.pen(dp(20)), -90.0, onTap = {
+            drawingView.currentTool = "pen"; drawingView.strokeWidth = toolThickness["pen"] ?: 6f; setDrawMode(true)
+        }, onLongPress = {
+            hideRadialMenu()
+            showToolOptionsDisc(dot, "pen")
+        }))
+        radialMenuWindow.addView(radialBtn(IconFactory.highlighter(dp(20)), -45.0, onTap = {
+            drawingView.currentTool = "highlighter"; drawingView.strokeWidth = toolThickness["highlighter"] ?: 6f; setDrawMode(true)
+        }, onLongPress = {
+            hideRadialMenu()
+            showThicknessPicker(dot, "highlighter")
+        }))
+        radialMenuWindow.addView(radialBtn(IconFactory.eraser(dp(20)), 0.0, onTap = {
+            drawingView.currentTool = "eraser"; drawingView.strokeWidth = toolThickness["eraser"] ?: 6f; setDrawMode(true)
+        }, onLongPress = {
+            hideRadialMenu()
+            showThicknessPicker(dot, "eraser")
+        }))
+        radialMenuWindow.addView(radialBtn(IconFactory.clearIcon(dp(20)), 45.0, onTap = {
             drawingView.clear()
-        })
-        radialMenuWindow.addView(radialBtn(IconFactory.undoIcon(dp(24)), 126.0) {
+        }))
+        radialMenuWindow.addView(radialBtn(IconFactory.undoIcon(dp(20)), 90.0, onTap = {
             drawingView.undo()
-        })
-        radialMenuWindow.addView(radialBtn(IconFactory.expandIcon(dp(24)), 198.0) {
+        }))
+        radialMenuWindow.addView(radialBtn(IconFactory.whiteboardIcon(dp(20)), 135.0, onTap = {
+            drawingView.setBoardMode("white")
+        }))
+        radialMenuWindow.addView(radialBtn(IconFactory.blackboardIcon(dp(20)), 180.0, onTap = {
+            drawingView.setBoardMode("black")
+        }))
+        radialMenuWindow.addView(radialBtn(IconFactory.expandIcon(dp(20)), 225.0, onTap = {
             toggleMinimize()
-        })
+        }))
 
         windowManager.addView(radialMenuWindow, radialMenuParams)
     }
@@ -626,14 +679,15 @@ class OverlayService : Service() {
         val maxHeight = (resources.displayMetrics.heightPixels * 0.82).toInt()
         val maxWidth = (resources.displayMetrics.widthPixels * 0.82).toInt()
         return if (horizontal) {
-            // height was hardcoded to 74dp before, which only fit a single icon row —
-            // any section that stacks icons vertically (Shapes, Candles, colors) got clipped
-            // the moment it was expanded. Give it the same generous cap used for the vertical
-            // layout's width, and let the row scroll sideways for anything wider than the screen.
+            // height must NOT be hardcoded to a large fixed value (that was the bug that made
+            // the horizontal bar cover most of the screen) — wrap_content keeps it exactly as
+            // tall as its content actually needs, whether that's one slim icon row or a
+            // section temporarily expanded open. Width is still capped so it doesn't run off
+            // the right edge of the screen; it scrolls sideways for anything wider.
             HorizontalScrollView(this).apply {
                 addView(panel)
                 background = roundedBg(16)
-                layoutParams = LinearLayout.LayoutParams(maxWidth, maxHeight)
+                layoutParams = LinearLayout.LayoutParams(maxWidth, LinearLayout.LayoutParams.WRAP_CONTENT)
             }
         } else {
             ScrollView(this).apply {
@@ -663,12 +717,14 @@ class OverlayService : Service() {
         scrollPanel.visibility = if (minimized) View.GONE else View.VISIBLE
         dot.visibility = if (minimized) View.VISIBLE else View.GONE
         hideRadialMenu()
+        hideToolOptions()
     }
 
     private val toolButtons = mutableListOf<ImageButton>()
 
     private fun addIconTool(icon: Bitmap, tool: String, container: LinearLayout? = null) {
         val target = container ?: panel
+        val hasOptions = tool == "pen" || tool == "highlighter" || tool == "eraser"
         val btn = ImageButton(this).apply {
             setImageBitmap(icon)
             background = GradientDrawable().apply {
@@ -676,14 +732,152 @@ class OverlayService : Service() {
                 cornerRadius = dp(6).toFloat()
             }
             scaleType = ImageView.ScaleType.CENTER
-            setOnClickListener {
-                drawingView.currentTool = tool
-                toolButtons.forEach { b -> b.background = GradientDrawable().apply { setColor(Color.TRANSPARENT); cornerRadius = dp(6).toFloat() } }
-                background = GradientDrawable().apply { setColor(Color.parseColor("#3F7D78")); cornerRadius = dp(6).toFloat() }
+        }
+        fun selectTool() {
+            drawingView.currentTool = tool
+            drawingView.strokeWidth = toolThickness[tool] ?: 6f
+            toolButtons.forEach { b -> b.background = GradientDrawable().apply { setColor(Color.TRANSPARENT); cornerRadius = dp(6).toFloat() } }
+            btn.background = GradientDrawable().apply { setColor(Color.parseColor("#3F7D78")); cornerRadius = dp(6).toFloat() }
+        }
+        if (hasOptions) {
+            // Pen / Highlighter / Eraser: tap selects the tool as usual; long-press pops up
+            // a small Thickness/Color disc for that specific tool (each keeps its own thickness)
+            val handler = Handler(Looper.getMainLooper())
+            var longPressed = false
+            var moved = false
+            var downX = 0f; var downY = 0f
+            val longPressRunnable = Runnable {
+                longPressed = true
+                showThicknessPicker(btn, tool)
             }
+            btn.setOnTouchListener { v, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        longPressed = false; moved = false
+                        downX = event.x; downY = event.y
+                        handler.postDelayed(longPressRunnable, 350)
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        if (Math.abs(event.x - downX) > dp(10) || Math.abs(event.y - downY) > dp(10)) {
+                            moved = true
+                            handler.removeCallbacks(longPressRunnable)
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        handler.removeCallbacks(longPressRunnable)
+                        if (!longPressed && !moved) { v.performClick(); selectTool() }
+                        true
+                    }
+                    MotionEvent.ACTION_CANCEL -> {
+                        handler.removeCallbacks(longPressRunnable)
+                        true
+                    }
+                    else -> false
+                }
+            }
+        } else {
+            btn.setOnClickListener { selectTool() }
         }
         toolButtons.add(btn)
         target.addView(btn, fullWidthParams(dp(36)))
+    }
+
+    // --- small popup shown on long-press of Pen/Highlighter/Eraser: Thickness + Color ---
+    private fun buildToolOptionsPopup(overlayType: Int) {
+        toolOptionsParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            overlayType,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START }
+        toolOptionsWindow = FrameLayout(this).apply { visibility = View.GONE }
+        windowManager.addView(toolOptionsWindow, toolOptionsParams)
+    }
+
+    private fun positionPopupNear(anchor: View, popupWidth: Int, popupHeight: Int) {
+        val loc = IntArray(2)
+        anchor.getLocationOnScreen(loc)
+        var x = loc[0] + anchor.width / 2 - popupWidth / 2
+        var y = loc[1] - popupHeight - dp(8)
+        if (y < dp(24)) y = loc[1] + anchor.height + dp(8) // not enough room above -> show below instead
+        if (x < 0) x = dp(4)
+        val screenW = resources.displayMetrics.widthPixels
+        if (x + popupWidth > screenW) x = screenW - popupWidth - dp(4)
+        toolOptionsParams.x = x
+        toolOptionsParams.y = y
+    }
+
+    private fun hideToolOptions() {
+        if (::toolOptionsWindow.isInitialized) toolOptionsWindow.visibility = View.GONE
+    }
+
+    private fun showToolOptionsDisc(anchor: View, tool: String) {
+        toolOptionsWindow.removeAllViews()
+        val pillWidth = dp(96); val pillHeight = dp(44)
+        val pill = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = roundedBg(14)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+        }
+        val thicknessBtn = ImageButton(this).apply {
+            setImageBitmap(IconFactory.thicknessIcon(dp(24)))
+            background = GradientDrawable().apply { setColor(Color.TRANSPARENT); cornerRadius = dp(6).toFloat() }
+            scaleType = ImageView.ScaleType.CENTER
+            layoutParams = LinearLayout.LayoutParams(dp(40), dp(36)).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) }
+            setOnClickListener { showThicknessPicker(anchor, tool) }
+        }
+        val colorBtn = View(this).apply {
+            background = GradientDrawable().apply { setColor(drawingView.currentColor); shape = GradientDrawable.OVAL }
+            layoutParams = LinearLayout.LayoutParams(dp(28), dp(28)).apply { setMargins(dp(6), dp(6), dp(6), dp(6)) }
+            setOnClickListener {
+                hideToolOptions()
+                colorPickerWindow.visibility = View.VISIBLE
+                windowManager.updateViewLayout(colorPickerWindow, colorPickerParams)
+            }
+        }
+        pill.addView(thicknessBtn)
+        pill.addView(colorBtn)
+        toolOptionsWindow.addView(pill)
+        positionPopupNear(anchor, pillWidth, pillHeight)
+        windowManager.updateViewLayout(toolOptionsWindow, toolOptionsParams)
+        toolOptionsWindow.visibility = View.VISIBLE
+    }
+
+    private fun showThicknessPicker(anchor: View, tool: String) {
+        toolOptionsWindow.removeAllViews()
+        val current = toolThickness[tool] ?: 6f
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = roundedBg(14)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+        }
+        for (i in thicknessLevels.indices) {
+            val selected = thicknessLevels[i] == current
+            val numBtn = TextView(this).apply {
+                text = (i + 1).toString()
+                gravity = Gravity.CENTER
+                setTextColor(Color.WHITE)
+                textSize = 12f
+                background = GradientDrawable().apply {
+                    setColor(Color.parseColor(if (selected) "#3F7D78" else "#33FFFFFF"))
+                    shape = GradientDrawable.OVAL
+                }
+                layoutParams = LinearLayout.LayoutParams(dp(28), dp(28)).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) }
+                setOnClickListener {
+                    toolThickness[tool] = thicknessLevels[i]
+                    if (drawingView.currentTool == tool) drawingView.strokeWidth = thicknessLevels[i]
+                    hideToolOptions()
+                }
+            }
+            row.addView(numBtn)
+        }
+        toolOptionsWindow.addView(row)
+        positionPopupNear(anchor, dp(28) * 5 + dp(8), dp(36))
+        windowManager.updateViewLayout(toolOptionsWindow, toolOptionsParams)
+        toolOptionsWindow.visibility = View.VISIBLE
     }
 
     private fun smallIconButton(icon: Bitmap, onClick: () -> Unit): ImageButton {
@@ -718,5 +912,6 @@ class OverlayService : Service() {
         if (::drawingView.isInitialized) windowManager.removeView(drawingView)
         if (::toolbarWindow.isInitialized) windowManager.removeView(toolbarWindow)
         if (::radialMenuWindow.isInitialized) windowManager.removeView(radialMenuWindow)
+        if (::toolOptionsWindow.isInitialized) windowManager.removeView(toolOptionsWindow)
     }
 }

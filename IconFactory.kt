@@ -119,6 +119,18 @@ object IconFactory {
         return bmp
     }
 
+    fun thicknessIcon(size: Int): Bitmap {
+        val (bmp, c) = newBitmap(size)
+        val p = Paint(Paint.ANTI_ALIAS_FLAG); p.style = Paint.Style.STROKE; p.color = ink; p.strokeCap = Paint.Cap.ROUND
+        val widths = floatArrayOf(1.5f, 2.5f, 4f)
+        val ys = floatArrayOf(size * 0.3f, size * 0.52f, size * 0.76f)
+        for (i in 0..2) {
+            p.strokeWidth = widths[i]
+            c.drawLine(size * 0.18f, ys[i], size * 0.82f, ys[i], p)
+        }
+        return bmp
+    }
+
     fun undoIcon(size: Int): Bitmap {
         val (bmp, c) = newBitmap(size)
         val p = Paint(Paint.ANTI_ALIAS_FLAG); p.style = Paint.Style.STROKE; p.strokeWidth = 2.5f; p.color = ink
