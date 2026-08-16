@@ -31,6 +31,9 @@ class OverlayService : Service() {
     private lateinit var drawBtn: Button
     private lateinit var colorPickerWindow: LinearLayout
     private lateinit var colorPickerParams: WindowManager.LayoutParams
+    private lateinit var radialMenuWindow: FrameLayout
+    private lateinit var radialMenuParams: WindowManager.LayoutParams
+    private var radialMenuVisible = false
 
     private var drawModeOn = false
     private var minimized = false
@@ -126,30 +129,9 @@ class OverlayService : Service() {
             layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
             visibility = View.GONE
         }
-        // --- quick-access bar: long-press the dot to get pen/highlighter/eraser/undo
-        //     without expanding the full panel ---
-        val quickBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            background = roundedBg(12)
-            setPadding(dp(4), dp(4), dp(4), dp(4))
-            visibility = View.GONE
-        }
-        quickBarRef = quickBar
-        fun quickBtn(icon: Bitmap, action: () -> Unit): ImageButton = ImageButton(this).apply {
-            setImageBitmap(icon)
-            background = GradientDrawable().apply { setColor(Color.TRANSPARENT); cornerRadius = dp(6).toFloat() }
-            scaleType = ImageView.ScaleType.CENTER
-            layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) }
-            setOnClickListener {
-                action()
-                quickBar.visibility = View.GONE
-                windowManager.updateViewLayout(toolbarWindow, toolbarParams)
-            }
-        }
-        quickBar.addView(quickBtn(IconFactory.pen(dp(28))) { drawingView.currentTool = "pen"; setDrawMode(true) })
-        quickBar.addView(quickBtn(IconFactory.eraser(dp(28))) { drawingView.currentTool = "eraser"; setDrawMode(true) })
-        quickBar.addView(quickBtn(IconFactory.clearIcon(dp(28))) { drawingView.clear() })
-        quickBar.addView(quickBtn(IconFactory.expandIcon(dp(28))) { toggleMinimize() })
+        // --- radial quick-access menu: long-press the dot to get a circular popup
+        //     with Pen / Eraser / Undo / Clear All / Expand, without opening the full panel ---
+        buildRadialMenu(overlayType)
 
         var dragStartRawX = 0f; var dragStartRawY = 0f
         var dragStartX = 0; var dragStartY = 0
@@ -158,8 +140,7 @@ class OverlayService : Service() {
         val longPressHandler = Handler(Looper.getMainLooper())
         val longPressRunnable = Runnable {
             longPressTriggered = true
-            quickBar.visibility = if (quickBar.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-            windowManager.updateViewLayout(toolbarWindow, toolbarParams)
+            toggleRadialMenu()
         }
         dot.setOnTouchListener { _, event ->
             when (event.action) {
@@ -177,6 +158,7 @@ class OverlayService : Service() {
                     if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
                         moved = true
                         longPressHandler.removeCallbacks(longPressRunnable)
+                        hideRadialMenu()
                     }
                     if (!longPressTriggered) {
                         toolbarParams.x = dragStartX + dx
@@ -188,8 +170,11 @@ class OverlayService : Service() {
                 MotionEvent.ACTION_UP -> {
                     longPressHandler.removeCallbacks(longPressRunnable)
                     // simple tap (not a drag, not a long-press) directly toggles draw mode —
-                    // this is the fast "turn pen off and give my phone back" action
-                    if (!longPressTriggered && !moved) setDrawMode(!drawModeOn)
+                    // this is the fast "turn pen off and give my phone back" action.
+                    // if the radial menu is open, a plain tap on the dot just closes it instead.
+                    if (!longPressTriggered && !moved) {
+                        if (radialMenuVisible) hideRadialMenu() else setDrawMode(!drawModeOn)
+                    }
                     true
                 }
                 else -> false
@@ -289,17 +274,34 @@ class OverlayService : Service() {
 
         addDivider()
 
-        val seek = SeekBar(this).apply {
-            max = 60; progress = 6
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(sb: SeekBar?, value: Int, fromUser: Boolean) {
-                    drawingView.strokeWidth = value.toFloat().coerceAtLeast(2f)
+        // numbered thickness picker: 5 fixed levels, tap a number to set stroke width exactly
+        // (replaces the old slider, which was fiddly to land on a precise size)
+        val thicknessLevels = floatArrayOf(3f, 6f, 10f, 16f, 24f)
+        val thicknessButtons = mutableListOf<TextView>()
+        fun selectThickness(index: Int) {
+            drawingView.strokeWidth = thicknessLevels[index]
+            thicknessButtons.forEachIndexed { i, b ->
+                b.background = GradientDrawable().apply {
+                    setColor(Color.parseColor(if (i == index) "#3F7D78" else "#33FFFFFF"))
+                    shape = GradientDrawable.OVAL
                 }
-                override fun onStartTrackingTouch(sb: SeekBar?) {}
-                override fun onStopTrackingTouch(sb: SeekBar?) {}
-            })
+            }
         }
-        panel.addView(seek, fullWidthParams(dp(30)))
+        val thicknessRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        for (i in thicknessLevels.indices) {
+            val numBtn = TextView(this).apply {
+                text = (i + 1).toString()
+                gravity = Gravity.CENTER
+                setTextColor(Color.WHITE)
+                textSize = 12f
+                layoutParams = LinearLayout.LayoutParams(dp(26), dp(26)).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) }
+                setOnClickListener { selectThickness(i) }
+            }
+            thicknessButtons.add(numBtn)
+            thicknessRow.addView(numBtn)
+        }
+        panel.addView(thicknessRow, fullWidthParams(dp(32)))
+        selectThickness(1) // default: level 2 (stroke width 6), matches the old default
 
         addDivider()
 
@@ -365,9 +367,83 @@ class OverlayService : Service() {
         panel.addView(smallIconButton(IconFactory.quitIcon(dp(24))) { stopSelf() }, fullWidthParams(dp(36)))
 
         toolbarWindow.addView(dot)
-        toolbarWindow.addView(quickBar)
         toolbarWindow.addView(scrollPanel)
         windowManager.addView(toolbarWindow, toolbarParams)
+    }
+
+    // --- radial quick-access menu: 5 buttons arranged in a circle around the dot ---
+    private fun buildRadialMenu(overlayType: Int) {
+        val containerSize = dp(190)
+        val btnSize = dp(42)
+        val radius = dp(60)
+        val center = containerSize / 2
+
+        radialMenuParams = WindowManager.LayoutParams(
+            containerSize,
+            containerSize,
+            overlayType,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START }
+
+        radialMenuWindow = FrameLayout(this).apply { visibility = View.GONE }
+
+        fun radialBtn(icon: Bitmap, angleDeg: Double, action: () -> Unit): ImageButton {
+            val rad = Math.toRadians(angleDeg)
+            val cx = center + (radius * Math.cos(rad)).toInt() - btnSize / 2
+            val cy = center + (radius * Math.sin(rad)).toInt() - btnSize / 2
+            return ImageButton(this).apply {
+                setImageBitmap(icon)
+                background = GradientDrawable().apply {
+                    setColor(Color.parseColor("#EE16233A"))
+                    shape = GradientDrawable.OVAL
+                }
+                scaleType = ImageView.ScaleType.CENTER
+                layoutParams = FrameLayout.LayoutParams(btnSize, btnSize).apply { leftMargin = cx; topMargin = cy }
+                setOnClickListener {
+                    action()
+                    hideRadialMenu()
+                }
+            }
+        }
+
+        // 5 items spaced 72° apart around the circle, starting at the top
+        radialMenuWindow.addView(radialBtn(IconFactory.pen(dp(24)), -90.0) {
+            drawingView.currentTool = "pen"; setDrawMode(true)
+        })
+        radialMenuWindow.addView(radialBtn(IconFactory.eraser(dp(24)), -18.0) {
+            drawingView.currentTool = "eraser"; setDrawMode(true)
+        })
+        radialMenuWindow.addView(radialBtn(IconFactory.clearIcon(dp(24)), 54.0) {
+            drawingView.clear()
+        })
+        radialMenuWindow.addView(radialBtn(IconFactory.undoIcon(dp(24)), 126.0) {
+            drawingView.undo()
+        })
+        radialMenuWindow.addView(radialBtn(IconFactory.expandIcon(dp(24)), 198.0) {
+            toggleMinimize()
+        })
+
+        windowManager.addView(radialMenuWindow, radialMenuParams)
+    }
+
+    private fun toggleRadialMenu() {
+        if (radialMenuVisible) hideRadialMenu() else showRadialMenu()
+    }
+
+    private fun showRadialMenu() {
+        // center the radial menu exactly on the dot's current on-screen position,
+        // in case the dot was dragged since the menu was created
+        radialMenuParams.x = toolbarParams.x + dp(24) - radialMenuParams.width / 2
+        radialMenuParams.y = toolbarParams.y + dp(24) - radialMenuParams.height / 2
+        windowManager.updateViewLayout(radialMenuWindow, radialMenuParams)
+        radialMenuWindow.visibility = View.VISIBLE
+        radialMenuVisible = true
+    }
+
+    private fun hideRadialMenu() {
+        if (::radialMenuWindow.isInitialized) radialMenuWindow.visibility = View.GONE
+        radialMenuVisible = false
     }
 
     private fun buildColorPicker(overlayType: Int) {
@@ -550,10 +626,14 @@ class OverlayService : Service() {
         val maxHeight = (resources.displayMetrics.heightPixels * 0.82).toInt()
         val maxWidth = (resources.displayMetrics.widthPixels * 0.82).toInt()
         return if (horizontal) {
+            // height was hardcoded to 74dp before, which only fit a single icon row —
+            // any section that stacks icons vertically (Shapes, Candles, colors) got clipped
+            // the moment it was expanded. Give it the same generous cap used for the vertical
+            // layout's width, and let the row scroll sideways for anything wider than the screen.
             HorizontalScrollView(this).apply {
                 addView(panel)
                 background = roundedBg(16)
-                layoutParams = LinearLayout.LayoutParams(maxWidth, dp(74))
+                layoutParams = LinearLayout.LayoutParams(maxWidth, maxHeight)
             }
         } else {
             ScrollView(this).apply {
@@ -578,13 +658,11 @@ class OverlayService : Service() {
         windowManager.updateViewLayout(toolbarWindow, toolbarParams)
     }
 
-    private lateinit var quickBarRef: LinearLayout
-
     private fun toggleMinimize() {
         minimized = !minimized
         scrollPanel.visibility = if (minimized) View.GONE else View.VISIBLE
         dot.visibility = if (minimized) View.VISIBLE else View.GONE
-        if (::quickBarRef.isInitialized) quickBarRef.visibility = View.GONE
+        hideRadialMenu()
     }
 
     private val toolButtons = mutableListOf<ImageButton>()
@@ -639,5 +717,6 @@ class OverlayService : Service() {
         super.onDestroy()
         if (::drawingView.isInitialized) windowManager.removeView(drawingView)
         if (::toolbarWindow.isInitialized) windowManager.removeView(toolbarWindow)
+        if (::radialMenuWindow.isInitialized) windowManager.removeView(radialMenuWindow)
     }
 }
