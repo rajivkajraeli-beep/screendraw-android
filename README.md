@@ -33,31 +33,48 @@ Windows).
    to turn it off and interact with your phone normally (your drawings
    stay on screen either way, since this is a live overlay, not a freeze
    like the Windows version).
-5. Pick a tool (Pen, Highlighter, Eraser, Circle, Square, Line, Arrow),
-   color, and thickness from the toolbar.
-6. **Save** exports just your annotation layer (transparent PNG) to
-   `Pictures/ScreenDraw` in your gallery — Android doesn't allow capturing
-   the actual screen behind the overlay without a separate permission flow
-   (MediaProjection), so it saves your markings only, not the app behind
-   them.
-7. **Quit** stops the overlay entirely.
+5. Pick a tool from the toolbar: Pen, Highlighter, Eraser, a collapsible
+   **Shapes** section (Circle, Square, Line, Arrow), and a collapsible
+   candlestick section (bullish/bearish, 4 body-size stages, no-wick, and
+   doji).
+6. Pick a color from the swatches, or tap **+** to open the full HSV
+   **color wheel picker** (drag on the wheel for hue/saturation, use the
+   brightness slider, then **Use color**).
+7. Tap the small orientation icon next to the minimize handle to flip the
+   toolbar between vertical (scrolls up/down) and horizontal (scrolls
+   left/right) layouts — handy in landscape or on smaller screens.
+8. Long-press the minimized `⠿` dot for a **quick-bar** (Pen, Eraser,
+   Clear, Expand) without opening the full panel; a normal tap on the dot
+   toggles draw mode directly.
+9. Drawing is **palm-rejection aware**: only one touch drives a stroke at
+   a time, so a resting palm or a second finger can't interrupt it. A
+   stylus always takes priority over a finger, and stylus strokes are
+   pressure-sensitive (press harder for a thicker line). A touch/hover
+   indicator bubble shows where the tip will draw.
+10. **Save** exports just your annotation layer (transparent PNG) to
+    `Pictures/ScreenDraw` in your gallery — Android doesn't allow capturing
+    the actual screen behind the overlay without a separate permission flow
+    (MediaProjection), so it saves your markings only, not the app behind
+    them.
+11. **Quit** stops the overlay entirely.
 
 ## Known limitations (be upfront about these)
 
-- **I could not build or run this myself** — my environment has no Android
-  SDK/emulator. There will likely be small build errors on first import
-  (missing resource, a Gradle/AGP version mismatch, etc.) — that's normal
-  for a first Android Studio import. Paste me the exact error and I'll fix
-  it directly.
 - No custom app icon yet — it borrows a generic system icon so the project
   builds without needing image assets from me. Replace it anytime via
   Android Studio's **Image Asset Studio** (right-click `res` → New → Image
   Asset).
-- No multi-stage candle tools like the Windows version — this is a clean
-  MVP (pen, highlighter, eraser, 4 shapes, colors, thickness, undo, clear,
-  whiteboard, save). Tell me if you want those ported over too.
 - On some Android versions/OEM skins (Xiaomi, Vivo, Oppo especially),
   overlay permission and background/foreground-service behavior is
   restricted further — if the toolbar doesn't appear after granting
   permission, check your phone's battery-optimization / "autostart"
   settings for the app too.
+
+## Build status
+
+Every push to `main` is built automatically by the `Build APK` GitHub
+Actions workflow — check the **Actions** tab on GitHub for the latest run
+and download the APK artifact from there. All current features (palm
+rejection, stylus pressure, quick-bar, touch indicator, shapes section,
+color wheel picker, orientation toggle) have been built and manually
+verified on-device.
