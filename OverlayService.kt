@@ -23,16 +23,22 @@ class OverlayService : Service() {
     private lateinit var windowManager: WindowManager
     private lateinit var drawingView: DrawingView
     private lateinit var toolbarWindow: LinearLayout
-    private lateinit var scrollPanel: ScrollView
+    private lateinit var scrollPanel: View
     private lateinit var panel: LinearLayout
     private lateinit var dot: TextView
     private lateinit var toolbarParams: WindowManager.LayoutParams
     private lateinit var drawParams: WindowManager.LayoutParams
     private lateinit var drawBtn: Button
+    private lateinit var colorPickerWindow: LinearLayout
+    private lateinit var colorPickerParams: WindowManager.LayoutParams
 
     private var drawModeOn = false
     private var minimized = false
     private var candlesOpen = false
+    private var isHorizontal = false
+    private var pickerHue = 0f
+    private var pickerSat = 0f
+    private var pickerVal = 1f
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
@@ -61,6 +67,7 @@ class OverlayService : Service() {
         windowManager.addView(drawingView, drawParams)
 
         buildToolbar(overlayType)
+        buildColorPicker(overlayType)
     }
 
     private fun setDrawMode(enabled: Boolean) {
@@ -75,6 +82,12 @@ class OverlayService : Service() {
         drawBtn.background = GradientDrawable().apply {
             setColor(Color.parseColor(if (enabled) "#C9622F" else "#3F7D78"))
             cornerRadius = dp(10).toFloat()
+        }
+        if (::dot.isInitialized) {
+            dot.background = GradientDrawable().apply {
+                setColor(Color.parseColor(if (enabled) "#EEC9622F" else "#EE16233A"))
+                shape = GradientDrawable.OVAL
+            }
         }
     }
 
@@ -113,6 +126,8 @@ class OverlayService : Service() {
             layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
             visibility = View.GONE
         }
+        // --- quick-access bar: long-press the dot to get pen/highlighter/eraser/undo
+        //     without expanding the full panel ---
         val quickBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             background = roundedBg(12)
@@ -124,17 +139,17 @@ class OverlayService : Service() {
             setImageBitmap(icon)
             background = GradientDrawable().apply { setColor(Color.TRANSPARENT); cornerRadius = dp(6).toFloat() }
             scaleType = ImageView.ScaleType.CENTER
-            layoutParams = LinearLayout.LayoutParams(dp(34), dp(34)).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) }
+            layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) }
             setOnClickListener {
                 action()
                 quickBar.visibility = View.GONE
                 windowManager.updateViewLayout(toolbarWindow, toolbarParams)
             }
         }
-        quickBar.addView(quickBtn(IconFactory.pen(dp(26))) { drawingView.currentTool = "pen"; setDrawMode(true) })
-        quickBar.addView(quickBtn(IconFactory.highlighter(dp(26))) { drawingView.currentTool = "highlighter"; setDrawMode(true) })
-        quickBar.addView(quickBtn(IconFactory.eraser(dp(26))) { drawingView.currentTool = "eraser"; setDrawMode(true) })
-        quickBar.addView(quickBtn(IconFactory.undoIcon(dp(26))) { drawingView.undo() })
+        quickBar.addView(quickBtn(IconFactory.pen(dp(28))) { drawingView.currentTool = "pen"; setDrawMode(true) })
+        quickBar.addView(quickBtn(IconFactory.eraser(dp(28))) { drawingView.currentTool = "eraser"; setDrawMode(true) })
+        quickBar.addView(quickBtn(IconFactory.clearIcon(dp(28))) { drawingView.clear() })
+        quickBar.addView(quickBtn(IconFactory.expandIcon(dp(28))) { toggleMinimize() })
 
         var dragStartRawX = 0f; var dragStartRawY = 0f
         var dragStartX = 0; var dragStartY = 0
@@ -172,24 +187,22 @@ class OverlayService : Service() {
                 }
                 MotionEvent.ACTION_UP -> {
                     longPressHandler.removeCallbacks(longPressRunnable)
-                    if (!longPressTriggered && !moved) toggleMinimize()
+                    // simple tap (not a drag, not a long-press) directly toggles draw mode —
+                    // this is the fast "turn pen off and give my phone back" action
+                    if (!longPressTriggered && !moved) setDrawMode(!drawModeOn)
                     true
                 }
                 else -> false
             }
         }
 
+        // --- full panel, inside a ScrollView so it can never exceed the screen ---
         panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(8), dp(10), dp(8), dp(10))
         }
 
-        scrollPanel = ScrollView(this).apply {
-            addView(panel)
-            background = roundedBg(16)
-        }
-        val maxHeight = (resources.displayMetrics.heightPixels * 0.82).toInt()
-        scrollPanel.layoutParams = LinearLayout.LayoutParams(dp(60), maxHeight)
+        scrollPanel = buildScrollWrapper(false)
 
         addDragHandle()
 
@@ -209,10 +222,33 @@ class OverlayService : Service() {
         addIconTool(IconFactory.pen(dp(28)), "pen")
         addIconTool(IconFactory.highlighter(dp(28)), "highlighter")
         addIconTool(IconFactory.eraser(dp(28)), "eraser")
-        addIconTool(IconFactory.circleIcon(dp(28)), "circle")
-        addIconTool(IconFactory.squareIcon(dp(28)), "square")
-        addIconTool(IconFactory.lineIcon(dp(28)), "line")
-        addIconTool(IconFactory.arrowIcon(dp(28)), "arrow")
+
+        addDivider()
+
+        val shapesToggle = Button(this).apply {
+            text = "▸"
+            textSize = 12f
+            setTextColor(Color.parseColor("#C3CEDD"))
+            background = null
+        }
+        panel.addView(shapesToggle, fullWidthParams(dp(24)))
+
+        val shapesContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+        addIconTool(IconFactory.circleIcon(dp(28)), "circle", shapesContainer)
+        addIconTool(IconFactory.squareIcon(dp(28)), "square", shapesContainer)
+        addIconTool(IconFactory.lineIcon(dp(28)), "line", shapesContainer)
+        addIconTool(IconFactory.arrowIcon(dp(28)), "arrow", shapesContainer)
+
+        var shapesOpen = false
+        shapesToggle.setOnClickListener {
+            shapesOpen = !shapesOpen
+            shapesContainer.visibility = if (shapesOpen) View.VISIBLE else View.GONE
+            shapesToggle.text = if (shapesOpen) "▾" else "▸"
+        }
+        panel.addView(shapesContainer)
 
         addDivider()
 
@@ -278,7 +314,8 @@ class OverlayService : Service() {
         panel.addView(actionRow2)
 
         panel.addView(smallIconButton(IconFactory.saveIcon(dp(24))) {
-            val ok = drawingView.saveToGallery(this)
+            Toast.makeText(this, "Saving…", Toast.LENGTH_SHORT).show()
+            val ok = try { drawingView.saveToGallery(this) } catch (e: Exception) { false }
             Toast.makeText(this, if (ok) "Saved to Pictures/ScreenDraw" else "Save failed", Toast.LENGTH_SHORT).show()
         }, fullWidthParams(dp(36)))
 
@@ -303,6 +340,24 @@ class OverlayService : Service() {
             }
             row?.addView(swatch)
         }
+        val customRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val customBtn = TextView(this).apply {
+            text = "+"
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            textSize = 11f
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#555566"))
+                shape = GradientDrawable.OVAL
+            }
+            layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) }
+            setOnClickListener {
+                colorPickerWindow.visibility = View.VISIBLE
+                windowManager.updateViewLayout(colorPickerWindow, colorPickerParams)
+            }
+        }
+        customRow.addView(customBtn)
+        colorGrid.addView(customRow)
         panel.addView(colorGrid)
 
         addDivider()
@@ -313,6 +368,120 @@ class OverlayService : Service() {
         toolbarWindow.addView(quickBar)
         toolbarWindow.addView(scrollPanel)
         windowManager.addView(toolbarWindow, toolbarParams)
+    }
+
+    private fun buildColorPicker(overlayType: Int) {
+        colorPickerParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            overlayType,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.CENTER }
+
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(16), dp(16), dp(16))
+            background = roundedBg(16)
+        }
+
+        val wheelSize = dp(200)
+        val wheelView = ImageView(this).apply {
+            setImageBitmap(generateColorWheel(wheelSize))
+            layoutParams = LinearLayout.LayoutParams(wheelSize, wheelSize)
+        }
+
+        val preview = View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(wheelSize, dp(28)).apply { topMargin = dp(10) }
+            setBackgroundColor(drawingView.currentColor)
+        }
+
+        fun updatePreview() {
+            preview.setBackgroundColor(Color.HSVToColor(floatArrayOf(pickerHue, pickerSat, pickerVal)))
+        }
+
+        wheelView.setOnTouchListener { _, event ->
+            val cx = wheelSize / 2f; val cy = wheelSize / 2f
+            val dx = event.x - cx; val dy = event.y - cy
+            val dist = Math.sqrt((dx * dx + dy * dy).toDouble()).toFloat()
+            val radius = wheelSize / 2f
+            if (dist <= radius) {
+                var angle = Math.toDegrees(Math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
+                if (angle < 0) angle += 360f
+                pickerHue = angle
+                pickerSat = (dist / radius).coerceIn(0f, 1f)
+                updatePreview()
+            }
+            true
+        }
+
+        val brightnessLabel = TextView(this).apply {
+            text = "Brightness"
+            setTextColor(Color.parseColor("#8FA3BD"))
+            textSize = 10f
+            setPadding(0, dp(8), 0, 0)
+        }
+        val brightnessSeek = SeekBar(this).apply {
+            max = 100; progress = 100
+            layoutParams = LinearLayout.LayoutParams(wheelSize, ViewGroup.LayoutParams.WRAP_CONTENT)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar?, value: Int, fromUser: Boolean) {
+                    pickerVal = value / 100f
+                    updatePreview()
+                }
+                override fun onStartTrackingTouch(sb: SeekBar?) {}
+                override fun onStopTrackingTouch(sb: SeekBar?) {}
+            })
+        }
+
+        val btnRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(wheelSize, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) }
+        }
+        val okBtn = Button(this).apply {
+            text = "Use color"
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener {
+                drawingView.currentColor = Color.HSVToColor(floatArrayOf(pickerHue, pickerSat, pickerVal))
+                colorPickerWindow.visibility = View.GONE
+            }
+        }
+        val cancelBtn = Button(this).apply {
+            text = "Cancel"
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { colorPickerWindow.visibility = View.GONE }
+        }
+        btnRow.addView(okBtn)
+        btnRow.addView(cancelBtn)
+
+        card.addView(wheelView)
+        card.addView(preview)
+        card.addView(brightnessLabel)
+        card.addView(brightnessSeek)
+        card.addView(btnRow)
+
+        colorPickerWindow = LinearLayout(this).apply { addView(card) }
+        colorPickerWindow.visibility = View.GONE
+        windowManager.addView(colorPickerWindow, colorPickerParams)
+    }
+
+    private fun generateColorWheel(size: Int): Bitmap {
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val radius = size / 2f
+        for (x in 0 until size) {
+            for (y in 0 until size) {
+                val dx = x - radius; val dy = y - radius
+                val dist = Math.sqrt((dx * dx + dy * dy).toDouble()).toFloat()
+                if (dist <= radius) {
+                    var angle = Math.toDegrees(Math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
+                    if (angle < 0) angle += 360f
+                    bmp.setPixel(x, y, Color.HSVToColor(floatArrayOf(angle, (dist / radius).coerceIn(0f, 1f), 1f)))
+                } else {
+                    bmp.setPixel(x, y, Color.TRANSPARENT)
+                }
+            }
+        }
+        return bmp
     }
 
     private fun fullWidthParams(height: Int) = LinearLayout.LayoutParams(
@@ -356,14 +525,57 @@ class OverlayService : Service() {
         }
         panel.addView(handle, fullWidthParams(dp(20)))
 
+        val controlRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val minBtn = TextView(this).apply {
             text = "—"
             textSize = 10f
             gravity = Gravity.CENTER
             setTextColor(Color.parseColor("#8FA3BD"))
+            layoutParams = LinearLayout.LayoutParams(0, dp(18), 1f)
             setOnClickListener { toggleMinimize() }
         }
-        panel.addView(minBtn, fullWidthParams(dp(16)))
+        val orientBtn = ImageButton(this).apply {
+            setImageBitmap(IconFactory.orientationIcon(dp(14)))
+            background = GradientDrawable().apply { setColor(Color.TRANSPARENT) }
+            scaleType = ImageView.ScaleType.CENTER
+            layoutParams = LinearLayout.LayoutParams(0, dp(18), 1f)
+            setOnClickListener { toggleOrientation() }
+        }
+        controlRow.addView(minBtn)
+        controlRow.addView(orientBtn)
+        panel.addView(controlRow, fullWidthParams(dp(18)))
+    }
+
+    private fun buildScrollWrapper(horizontal: Boolean): View {
+        val maxHeight = (resources.displayMetrics.heightPixels * 0.82).toInt()
+        val maxWidth = (resources.displayMetrics.widthPixels * 0.82).toInt()
+        return if (horizontal) {
+            HorizontalScrollView(this).apply {
+                addView(panel)
+                background = roundedBg(16)
+                layoutParams = LinearLayout.LayoutParams(maxWidth, dp(74))
+            }
+        } else {
+            ScrollView(this).apply {
+                addView(panel)
+                background = roundedBg(16)
+                layoutParams = LinearLayout.LayoutParams(dp(60), maxHeight)
+            }
+        }
+    }
+
+    private fun toggleOrientation() {
+        isHorizontal = !isHorizontal
+        val wasVisible = scrollPanel.visibility
+        (panel.parent as? ViewGroup)?.removeView(panel)
+        panel.orientation = if (isHorizontal) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+
+        toolbarWindow.removeView(scrollPanel)
+        val newWrapper = buildScrollWrapper(isHorizontal)
+        newWrapper.visibility = wasVisible
+        scrollPanel = newWrapper
+        toolbarWindow.addView(newWrapper)
+        windowManager.updateViewLayout(toolbarWindow, toolbarParams)
     }
 
     private lateinit var quickBarRef: LinearLayout
@@ -377,7 +589,8 @@ class OverlayService : Service() {
 
     private val toolButtons = mutableListOf<ImageButton>()
 
-    private fun addIconTool(icon: Bitmap, tool: String) {
+    private fun addIconTool(icon: Bitmap, tool: String, container: LinearLayout? = null) {
+        val target = container ?: panel
         val btn = ImageButton(this).apply {
             setImageBitmap(icon)
             background = GradientDrawable().apply {
@@ -392,7 +605,7 @@ class OverlayService : Service() {
             }
         }
         toolButtons.add(btn)
-        panel.addView(btn, fullWidthParams(dp(36)))
+        target.addView(btn, fullWidthParams(dp(36)))
     }
 
     private fun smallIconButton(icon: Bitmap, onClick: () -> Unit): ImageButton {

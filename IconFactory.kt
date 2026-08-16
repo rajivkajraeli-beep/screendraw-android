@@ -174,7 +174,23 @@ object IconFactory {
         return bmp
     }
 
-    /** Candlestick icon: colored wick + body, or a black horizontal line for doji. */
+    fun expandIcon(size: Int): Bitmap {
+        val (bmp, c) = newBitmap(size)
+        val p = Paint(Paint.ANTI_ALIAS_FLAG); p.style = Paint.Style.STROKE; p.strokeWidth = 2.2f; p.color = ink
+        c.drawRoundRect(RectF(size * 0.18f, size * 0.18f, size * 0.82f, size * 0.82f), 2f, 2f, p)
+        p.strokeCap = Paint.Cap.ROUND
+        c.drawLine(size * 0.34f, size * 0.34f, size * 0.66f, size * 0.66f, p)
+        return bmp
+    }
+
+    fun orientationIcon(size: Int): Bitmap {
+        val (bmp, c) = newBitmap(size)
+        val p = Paint(Paint.ANTI_ALIAS_FLAG); p.style = Paint.Style.STROKE; p.strokeWidth = 2f; p.color = ink; p.strokeCap = Paint.Cap.ROUND
+        c.drawRoundRect(RectF(size * 0.12f, size * 0.35f, size * 0.88f, size * 0.65f), 3f, 3f, p)
+        c.drawLine(size * 0.5f, size * 0.15f, size * 0.5f, size * 0.85f, p)
+        return bmp
+    }
+
     fun candle(size: Int, isGreen: Boolean, ratio: Float, wick: Boolean = true, lineBody: Boolean = false): Bitmap {
         val (bmp, c) = newBitmap(size)
         val fill = if (isGreen) Color.parseColor("#26A65B") else Color.parseColor("#D93A2F")
