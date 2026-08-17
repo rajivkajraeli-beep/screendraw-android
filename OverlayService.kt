@@ -794,7 +794,9 @@ class OverlayService : Service() {
             ringIconBtn(IconFactory.squareIcon(dp(22))) to { showShapesList(anchor) },
             ringIconBtn(IconFactory.candle(dp(22), true, 0.6f)) to { showCandlesList(anchor) }
         )
-        showRingPopup(anchor, items, ringRadius = dp(34), btnSize = dp(36), containerSize = dp(110), closeOnSelect = true)
+        // this disc only navigates into Shapes or Candles — it must NOT auto-close itself,
+        // otherwise it closes the very sub-disc it just opened (same popup window is reused)
+        showRingPopup(anchor, items, ringRadius = dp(34), btnSize = dp(36), containerSize = dp(110), closeOnSelect = false)
     }
 
     private fun showShapesList(anchor: View) {
@@ -860,7 +862,8 @@ class OverlayService : Service() {
             colorPickerWindow.visibility = View.VISIBLE
             windowManager.updateViewLayout(colorPickerWindow, colorPickerParams)
         })
-        showRingPopup(anchor, items, ringRadius = dp(50), btnSize = dp(26), containerSize = dp(140), closeOnSelect = false)
+        // colors close the disc right after a pick (unlike shapes/candles, which stay open)
+        showRingPopup(anchor, items, ringRadius = dp(50), btnSize = dp(26), containerSize = dp(140), closeOnSelect = true)
     }
 
     private fun showToolOptionsDisc(anchor: View, tool: String) {
