@@ -282,6 +282,9 @@ class DrawingView(context: Context) : View(context) {
                 val side = maxOf(right - left, bottom - top)
                 target.drawRect(RectF(left, top, left + side, top + side), paint)
             }
+            currentTool == "rectangle" -> {
+                target.drawRect(RectF(left, top, right, bottom), paint)
+            }
             currentTool.startsWith("gc") || currentTool.startsWith("rc") -> {
                 val isGreen = currentTool.startsWith("gc")
                 val code = currentTool.substring(2)
@@ -366,8 +369,11 @@ class DrawingView(context: Context) : View(context) {
                 }
             }
             val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return false
-            val out: OutputStream? = resolver.openOutputStream(uri)
-            out?.use { stream -> bmp.compress(Bitmap.CompressFormat.PNG, 100, stream) }
+            // BUG FIX: openOutputStream can return null (e.g. if the resolver/URI is invalid);
+            // the old code used `out?.use{}` which silently skipped writing but still fell
+            // through to `return true` below — a false "success" with nothing actually saved.
+            val out: OutputStream = resolver.openOutputStream(uri) ?: return false
+            out.use { stream -> bmp.compress(Bitmap.CompressFormat.PNG, 100, stream) }
             true
         } catch (e: Exception) {
             false

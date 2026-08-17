@@ -39,7 +39,6 @@ class OverlayService : Service() {
 
     private var drawModeOn = false
     private var minimized = false
-    private var candlesOpen = false
     private var isHorizontal = false
     private var pickerHue = 0f
     private var pickerSat = 0f
@@ -87,6 +86,9 @@ class OverlayService : Service() {
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
         }
         windowManager.updateViewLayout(drawingView, drawParams)
+        // hide the drawn strokes while draw mode is off, and bring them back when it's turned
+        // back on — the ink itself (the bitmap) is untouched, only its visibility toggles
+        drawingView.visibility = if (enabled) View.VISIBLE else View.INVISIBLE
         drawBtn.background = GradientDrawable().apply {
             setColor(Color.parseColor(if (enabled) "#C9622F" else "#3F7D78"))
             cornerRadius = dp(10).toFloat()
@@ -215,67 +217,16 @@ class OverlayService : Service() {
 
         addDivider()
 
-        val shapesToggle = Button(this).apply {
-            text = "▸"
-            textSize = 12f
-            setTextColor(Color.parseColor("#C3CEDD"))
-            background = null
+        // Shapes + Candles used to be two always-expandable inline sections that ate a lot of
+        // space the moment either was opened. Now it's one slim launcher icon: tap it to get
+        // a small disc offering "Shapes" or "Candles", each opening its own compact popup.
+        val shapesCandlesBtn = ImageButton(this).apply {
+            setImageBitmap(IconFactory.toolboxIcon(dp(26)))
+            background = GradientDrawable().apply { setColor(Color.TRANSPARENT); cornerRadius = dp(6).toFloat() }
+            scaleType = ImageView.ScaleType.CENTER
         }
-        panel.addView(shapesToggle, fullWidthParams(dp(24)))
-
-        val shapesContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            visibility = View.GONE
-        }
-        addIconTool(IconFactory.circleIcon(dp(28)), "circle", shapesContainer)
-        addIconTool(IconFactory.squareIcon(dp(28)), "square", shapesContainer)
-        addIconTool(IconFactory.lineIcon(dp(28)), "line", shapesContainer)
-        addIconTool(IconFactory.arrowIcon(dp(28)), "arrow", shapesContainer)
-
-        var shapesOpen = false
-        shapesToggle.setOnClickListener {
-            shapesOpen = !shapesOpen
-            shapesContainer.visibility = if (shapesOpen) View.VISIBLE else View.GONE
-            shapesToggle.text = if (shapesOpen) "▾" else "▸"
-        }
-        panel.addView(shapesContainer)
-
-        addDivider()
-
-        val candleToggle = Button(this).apply {
-            text = "▸"
-            textSize = 12f
-            setTextColor(Color.parseColor("#C3CEDD"))
-            background = null
-        }
-        panel.addView(candleToggle, fullWidthParams(dp(24)))
-
-        val candleContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            visibility = View.GONE
-        }
-        val stages = floatArrayOf(0.78f, 0.52f, 0.28f, 0.08f)
-        for (i in 0..3) {
-            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            row.addView(smallIconButton(IconFactory.candle(dp(26), true, stages[i])) { drawingView.currentTool = "gc${i + 1}" })
-            row.addView(smallIconButton(IconFactory.candle(dp(26), false, stages[i])) { drawingView.currentTool = "rc${i + 1}" })
-            candleContainer.addView(row)
-        }
-        val nwRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        nwRow.addView(smallIconButton(IconFactory.candle(dp(26), true, 0.62f, wick = false)) { drawingView.currentTool = "gcnw" })
-        nwRow.addView(smallIconButton(IconFactory.candle(dp(26), false, 0.62f, wick = false)) { drawingView.currentTool = "rcnw" })
-        candleContainer.addView(nwRow)
-        val dojiRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        dojiRow.addView(smallIconButton(IconFactory.candle(dp(26), true, 0f, wick = true, lineBody = true)) { drawingView.currentTool = "gcdoji" })
-        dojiRow.addView(smallIconButton(IconFactory.candle(dp(26), false, 0f, wick = true, lineBody = true)) { drawingView.currentTool = "rcdoji" })
-        candleContainer.addView(dojiRow)
-
-        candleToggle.setOnClickListener {
-            candlesOpen = !candlesOpen
-            candleContainer.visibility = if (candlesOpen) View.VISIBLE else View.GONE
-            candleToggle.text = if (candlesOpen) "▾" else "▸"
-        }
-        panel.addView(candleContainer)
+        shapesCandlesBtn.setOnClickListener { showShapesCandlesDisc(shapesCandlesBtn) }
+        panel.addView(shapesCandlesBtn, fullWidthParams(dp(36)))
 
         addDivider()
 
@@ -812,6 +763,104 @@ class OverlayService : Service() {
 
     private fun hideToolOptions() {
         if (::toolOptionsWindow.isInitialized) toolOptionsWindow.visibility = View.GONE
+    }
+
+    // --- Shapes + Candles launcher disc: one slim entry point instead of two space-hungry
+    //     always-expandable inline sections ---
+    private fun showShapesCandlesDisc(anchor: View) {
+        toolOptionsWindow.removeAllViews()
+        val pill = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = roundedBg(14)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+        }
+        val shapesBtn = ImageButton(this).apply {
+            setImageBitmap(IconFactory.squareIcon(dp(24)))
+            background = GradientDrawable().apply { setColor(Color.TRANSPARENT); cornerRadius = dp(6).toFloat() }
+            scaleType = ImageView.ScaleType.CENTER
+            layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) }
+            setOnClickListener { showShapesList(anchor) }
+        }
+        val candlesBtn = ImageButton(this).apply {
+            setImageBitmap(IconFactory.candle(dp(24), true, 0.6f))
+            background = GradientDrawable().apply { setColor(Color.TRANSPARENT); cornerRadius = dp(6).toFloat() }
+            scaleType = ImageView.ScaleType.CENTER
+            layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) }
+            setOnClickListener { showCandlesList(anchor) }
+        }
+        pill.addView(shapesBtn)
+        pill.addView(candlesBtn)
+        toolOptionsWindow.addView(pill)
+        positionPopupNear(anchor, dp(96), dp(48))
+        windowManager.updateViewLayout(toolOptionsWindow, toolOptionsParams)
+        toolOptionsWindow.visibility = View.VISIBLE
+    }
+
+    private fun showShapesList(anchor: View) {
+        toolOptionsWindow.removeAllViews()
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = roundedBg(14)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+        }
+        fun shapeBtn(icon: Bitmap, tool: String): ImageButton = ImageButton(this).apply {
+            setImageBitmap(icon)
+            background = GradientDrawable().apply { setColor(Color.TRANSPARENT); cornerRadius = dp(6).toFloat() }
+            scaleType = ImageView.ScaleType.CENTER
+            layoutParams = LinearLayout.LayoutParams(dp(38), dp(38)).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) }
+            setOnClickListener {
+                drawingView.currentTool = tool
+                hideToolOptions()
+            }
+        }
+        row.addView(shapeBtn(IconFactory.circleIcon(dp(24)), "circle"))
+        row.addView(shapeBtn(IconFactory.squareIcon(dp(24)), "square"))
+        row.addView(shapeBtn(IconFactory.rectangleIcon(dp(24)), "rectangle"))
+        row.addView(shapeBtn(IconFactory.lineIcon(dp(24)), "line"))
+        row.addView(shapeBtn(IconFactory.arrowIcon(dp(24)), "arrow"))
+        toolOptionsWindow.addView(row)
+        positionPopupNear(anchor, dp(38) * 5 + dp(16), dp(46))
+        windowManager.updateViewLayout(toolOptionsWindow, toolOptionsParams)
+        toolOptionsWindow.visibility = View.VISIBLE
+    }
+
+    private fun showCandlesList(anchor: View) {
+        toolOptionsWindow.removeAllViews()
+        val grid = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = roundedBg(14)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+        }
+        fun candleBtn(isGreen: Boolean, ratio: Float, tool: String, wick: Boolean = true, lineBody: Boolean = false): ImageButton =
+            ImageButton(this).apply {
+                setImageBitmap(IconFactory.candle(dp(24), isGreen, ratio, wick, lineBody))
+                background = GradientDrawable().apply { setColor(Color.TRANSPARENT); cornerRadius = dp(6).toFloat() }
+                scaleType = ImageView.ScaleType.CENTER
+                layoutParams = LinearLayout.LayoutParams(dp(34), dp(34)).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) }
+                setOnClickListener {
+                    drawingView.currentTool = tool
+                    hideToolOptions()
+                }
+            }
+        val stages = floatArrayOf(0.78f, 0.52f, 0.28f, 0.08f)
+        for (i in 0..3) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            row.addView(candleBtn(true, stages[i], "gc${i + 1}"))
+            row.addView(candleBtn(false, stages[i], "rc${i + 1}"))
+            grid.addView(row)
+        }
+        val nwRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        nwRow.addView(candleBtn(true, 0.62f, "gcnw", wick = false))
+        nwRow.addView(candleBtn(false, 0.62f, "rcnw", wick = false))
+        grid.addView(nwRow)
+        val dojiRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        dojiRow.addView(candleBtn(true, 0f, "gcdoji", wick = true, lineBody = true))
+        dojiRow.addView(candleBtn(false, 0f, "rcdoji", wick = true, lineBody = true))
+        grid.addView(dojiRow)
+        toolOptionsWindow.addView(grid)
+        positionPopupNear(anchor, dp(34) * 2 + dp(16), dp(34) * 6 + dp(16))
+        windowManager.updateViewLayout(toolOptionsWindow, toolOptionsParams)
+        toolOptionsWindow.visibility = View.VISIBLE
     }
 
     private fun showToolOptionsDisc(anchor: View, tool: String) {

@@ -96,6 +96,28 @@ object IconFactory {
         return bmp
     }
 
+    fun rectangleIcon(size: Int): Bitmap {
+        val (bmp, c) = newBitmap(size)
+        val p = Paint(Paint.ANTI_ALIAS_FLAG); p.style = Paint.Style.STROKE; p.strokeWidth = 2.5f; p.color = ink
+        c.drawRoundRect(RectF(size * 0.12f, size * 0.3f, size * 0.88f, size * 0.7f), 3f, 3f, p)
+        return bmp
+    }
+
+    fun toolboxIcon(size: Int): Bitmap {
+        val (bmp, c) = newBitmap(size)
+        val p = Paint(Paint.ANTI_ALIAS_FLAG); p.style = Paint.Style.STROKE; p.strokeWidth = 2.2f; p.color = ink
+        val gap = size * 0.14f
+        val cellSize = size * 0.32f
+        val positions = listOf(
+            Pair(size * 0.18f, size * 0.18f),
+            Pair(size * 0.18f + cellSize + gap, size * 0.18f),
+            Pair(size * 0.18f, size * 0.18f + cellSize + gap),
+            Pair(size * 0.18f + cellSize + gap, size * 0.18f + cellSize + gap)
+        )
+        for ((x, y) in positions) c.drawRect(x, y, x + cellSize, y + cellSize, p)
+        return bmp
+    }
+
     fun lineIcon(size: Int): Bitmap {
         val (bmp, c) = newBitmap(size)
         val p = Paint(Paint.ANTI_ALIAS_FLAG); p.strokeWidth = 2.5f; p.color = ink; p.strokeCap = Paint.Cap.ROUND
