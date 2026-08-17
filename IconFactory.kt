@@ -118,6 +118,22 @@ object IconFactory {
         return bmp
     }
 
+    fun paletteIcon(size: Int): Bitmap {
+        val (bmp, c) = newBitmap(size)
+        val colors = intArrayOf(
+            Color.parseColor("#FF3B30"), Color.parseColor("#FFD60A"),
+            Color.parseColor("#34C759"), Color.parseColor("#0A84FF")
+        )
+        val r = size * 0.19f
+        val positions = listOf(
+            Pair(size * 0.28f, size * 0.28f), Pair(size * 0.72f, size * 0.28f),
+            Pair(size * 0.28f, size * 0.72f), Pair(size * 0.72f, size * 0.72f)
+        )
+        val p2 = Paint(Paint.ANTI_ALIAS_FLAG); p2.style = Paint.Style.FILL
+        positions.forEachIndexed { i, (x, y) -> p2.color = colors[i]; c.drawCircle(x, y, r, p2) }
+        return bmp
+    }
+
     fun lineIcon(size: Int): Bitmap {
         val (bmp, c) = newBitmap(size)
         val p = Paint(Paint.ANTI_ALIAS_FLAG); p.strokeWidth = 2.5f; p.color = ink; p.strokeCap = Paint.Cap.ROUND
