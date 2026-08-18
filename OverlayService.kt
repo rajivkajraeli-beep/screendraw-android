@@ -198,6 +198,28 @@ class OverlayService : Service() {
 
         addDragHandle()
 
+        // the whole panel is draggable from any empty space around the buttons too, not
+        // just the small handle strip — buttons still get first claim on their own taps,
+        // since Android only passes a touch through to the parent if no child consumed it
+        var panelDragStartX = 0; var panelDragStartY = 0
+        var panelDragRawX = 0f; var panelDragRawY = 0f
+        panel.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    panelDragStartX = toolbarParams.x; panelDragStartY = toolbarParams.y
+                    panelDragRawX = event.rawX; panelDragRawY = event.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    toolbarParams.x = panelDragStartX + (event.rawX - panelDragRawX).toInt()
+                    toolbarParams.y = panelDragStartY + (event.rawY - panelDragRawY).toInt()
+                    windowManager.updateViewLayout(toolbarWindow, toolbarParams)
+                    true
+                }
+                else -> false
+            }
+        }
+
         drawBtn = Button(this).apply {
             text = "●"
             setTextColor(Color.WHITE)
@@ -754,6 +776,27 @@ class OverlayService : Service() {
         val container = FrameLayout(this).apply {
             background = GradientDrawable().apply { setColor(Color.parseColor("#CC16233A")); shape = GradientDrawable.OVAL }
         }
+        // the disc itself is draggable from its own empty background (not the ring buttons) —
+        // useful especially for the ones that stay open (Shapes/Candles), so you can move it
+        // out of the way of what you're drawing without having to close and reopen it
+        var discDragStartX = 0; var discDragStartY = 0
+        var discDragRawX = 0f; var discDragRawY = 0f
+        container.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    discDragStartX = toolOptionsParams.x; discDragStartY = toolOptionsParams.y
+                    discDragRawX = event.rawX; discDragRawY = event.rawY
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    toolOptionsParams.x = discDragStartX + (event.rawX - discDragRawX).toInt()
+                    toolOptionsParams.y = discDragStartY + (event.rawY - discDragRawY).toInt()
+                    windowManager.updateViewLayout(toolOptionsWindow, toolOptionsParams)
+                    true
+                }
+                else -> false
+            }
+        }
         val center = containerSize / 2
         val n = items.size
         items.forEachIndexed { i, (v, action) ->
@@ -834,7 +877,9 @@ class OverlayService : Service() {
             ringIconBtn(IconFactory.whiteboardIcon(dp(24))) to { drawingView.setBoardMode("white") },
             ringIconBtn(IconFactory.blackboardIcon(dp(24))) to { drawingView.setBoardMode("black") }
         )
-        showRingPopup(anchor, items, ringRadius = dp(36), btnSize = dp(38), containerSize = dp(114), closeOnSelect = false)
+        // closes right after a pick (only one board mode applies at a time, unlike
+        // shapes/candles where you might want several in a row)
+        showRingPopup(anchor, items, ringRadius = dp(36), btnSize = dp(38), containerSize = dp(114), closeOnSelect = true)
     }
 
     // --- Colors launcher disc: 6 quick swatches + "+" for the full wheel picker ---
