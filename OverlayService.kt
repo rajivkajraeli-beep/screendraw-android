@@ -839,7 +839,8 @@ class OverlayService : Service() {
         )
         // this disc only navigates into Shapes or Candles — it must NOT auto-close itself,
         // otherwise it closes the very sub-disc it just opened (same popup window is reused)
-        showRingPopup(anchor, items, ringRadius = dp(34), btnSize = dp(36), containerSize = dp(110), closeOnSelect = false)
+        // only 2 items here, so a big circle just wastes space — keep this one tight
+        showRingPopup(anchor, items, ringRadius = dp(28), btnSize = dp(32), containerSize = dp(88), closeOnSelect = false)
     }
 
     private fun showShapesList(anchor: View) {
@@ -878,8 +879,9 @@ class OverlayService : Service() {
             ringIconBtn(IconFactory.blackboardIcon(dp(24))) to { drawingView.setBoardMode("black") }
         )
         // closes right after a pick (only one board mode applies at a time, unlike
-        // shapes/candles where you might want several in a row)
-        showRingPopup(anchor, items, ringRadius = dp(36), btnSize = dp(38), containerSize = dp(114), closeOnSelect = true)
+        // shapes/candles where you might want several in a row) — kept tight since it's
+        // only 2 items, no need for a big circle
+        showRingPopup(anchor, items, ringRadius = dp(30), btnSize = dp(34), containerSize = dp(92), closeOnSelect = true)
     }
 
     // --- Colors launcher disc: 6 quick swatches + "+" for the full wheel picker ---

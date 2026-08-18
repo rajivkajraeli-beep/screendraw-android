@@ -255,7 +255,7 @@ object IconFactory {
             c.drawLine(cx, top, cx, bottom, p)
         }
         if (lineBody) {
-            p.style = Paint.Style.STROKE; p.strokeWidth = 3f; p.color = Color.parseColor("#141414")
+            p.style = Paint.Style.STROKE; p.strokeWidth = 3f; p.color = Color.parseColor("#E8E8E8")
             c.drawLine(cx - bodyW / 2, size / 2f, cx + bodyW / 2, size / 2f, p)
         } else {
             val bodyH = (bottom - top) * ratio

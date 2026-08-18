@@ -344,7 +344,10 @@ class DrawingView(context: Context) : View(context) {
         paint.color = darken(fill); paint.strokeWidth = wickWidth
         target.drawLine(wickX, rect.top, wickX, rect.bottom, paint)
 
-        paint.color = Color.parseColor("#141414"); paint.strokeWidth = wickWidth
+        // the doji's center line needs to stand out against whichever board is active —
+        // near-black was invisible on the blackboard
+        paint.color = if (currentBoardMode == "black") Color.parseColor("#F0F0F0") else Color.parseColor("#141414")
+        paint.strokeWidth = wickWidth
         target.drawLine(wickX - bodyWidth / 2, rect.centerY(), wickX + bodyWidth / 2, rect.centerY(), paint)
     }
 
